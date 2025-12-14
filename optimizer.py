@@ -231,17 +231,85 @@ class LineupOptimizer:
         else:
             return None
         
-        # Build final lineup dict
-        total_salary = sum(p['Salary'] for p in lineup_players)
-        total_proj = sum(p['Projection'] for p in lineup_players)
-        total_own = sum(p['Ownership'] for p in lineup_players)
+        # Build final lineup dict with proper ordering
+        return self._format_lineup_ordered(lineup_players, total_salary, total_proj, total_own)
+    
+    def _format_lineup_ordered(self, players_list: List[Dict], salary: int, proj: float, own: float) -> Dict:
+        """Format lineup in proper DraftKings order: QB, RB, RB, WR, WR, WR, TE, FLEX, DST"""
+        
+        # Separate by position
+        qb = [p for p in players_list if p['Position'] == 'QB'][0]
+        rbs = [p for p in players_list if p['Position'] == 'RB']
+        wrs = [p for p in players_list if p['Position'] == 'WR']
+        tes = [p for p in players_list if p['Position'] == 'TE']
+        dst = [p for p in players_list if p['Position'] == 'DST'][0]
+        
+        # Sort by salary within position for consistency
+        rbs = sorted(rbs, key=lambda x: x['Salary'], reverse=True)
+        wrs = sorted(wrs, key=lambda x: x['Salary'], reverse=True)
+        tes = sorted(tes, key=lambda x: x['Salary'], reverse=True)
+        
+        # Build ordered lineup
+        ordered = []
+        
+        # QB (1)
+        ordered.append(qb)
+        
+        # RBs (2 required)
+        for i in range(min(2, len(rbs))):
+            ordered.append(rbs[i])
+        
+        # WRs (3 required)
+        for i in range(min(3, len(wrs))):
+            ordered.append(wrs[i])
+        
+        # TE (1 required)
+        ordered.append(tes[0])
+        
+        # FLEX - remaining RB, WR, or TE
+        flex_candidates = rbs[2:] + wrs[3:] + tes[1:]
+        if flex_candidates:
+            flex = flex_candidates[0]
+            # Mark as FLEX for display
+            flex_copy = flex.copy()
+            flex_copy['PositionSlot'] = f"FLEX ({flex['Position']})"
+            ordered.append(flex_copy)
+        
+        # DST (1)
+        ordered.append(dst)
+        
+        # Calculate advanced metrics
+        avg_own = own / len(ordered)
+        pts_per_1k = proj / (salary / 1000)
+        salary_remaining = SALARY_CAP - salary
+        
+        # Identify stack
+        qb_team = qb['Team']
+        stack_players = [p for p in ordered if p.get('Team') == qb_team and p['Position'] != 'QB']
+        stack_positions = [p['Position'] for p in stack_players]
+        stack_desc = f"{qb_team} Stack: QB + {', '.join(stack_positions)}" if stack_players else "No stack"
+        
+        # Game stacks (identify games with multiple players)
+        games = {}
+        for p in ordered:
+            if 'Opponent' in p and p.get('Opponent'):
+                game = tuple(sorted([p['Team'], p['Opponent']]))
+                games[game] = games.get(game, 0) + 1
+        
+        game_stacks = [f"{g[0]} vs {g[1]} ({count} players)" for g, count in games.items() if count >= 2]
         
         return {
-            'players': lineup_players,
-            'salary': total_salary,
-            'projection': total_proj,
-            'ownership': total_own,
-            'stack_size': 3  # QB + 2
+            'players': ordered,
+            'salary': salary,
+            'salary_remaining': salary_remaining,
+            'projection': proj,
+            'ownership': own,
+            'ownership_avg': avg_own,
+            'value': pts_per_1k,
+            'stack': stack_desc,
+            'stack_team': qb_team,
+            'stack_count': len(stack_players),
+            'game_stacks': game_stacks if game_stacks else ["No game stacks"]
         }
     
     
@@ -304,16 +372,35 @@ class LineupOptimizer:
         return True
     
     def _is_duplicate(self, lineup: Dict, existing: List[Dict]) -> bool:
-        """Check if lineup is duplicate of existing lineup"""
+        """
+        Check if lineup is too similar to existing lineups
+        Enhanced: Check multiple similarity thresholds
+        """
         
         lineup_players = set(p['Name'] for p in lineup['players'])
         
         for existing_lineup in existing:
             existing_players = set(p['Name'] for p in existing_lineup['players'])
             
-            # If 7+ players match, consider it a duplicate
-            if len(lineup_players & existing_players) >= 7:
+            # Count matching players
+            matches = len(lineup_players & existing_players)
+            
+            # Reject if 7+ players match (too similar)
+            if matches >= 7:
                 return True
+            
+            # Also reject if same QB + same top 3 salary players (stack clone)
+            lineup_qb = [p['Name'] for p in lineup['players'] if p['Position'] == 'QB'][0]
+            existing_qb = [p['Name'] for p in existing_lineup['players'] if p['Position'] == 'QB'][0]
+            
+            if lineup_qb == existing_qb:
+                # Get top 3 by salary
+                lineup_top3 = set([p['Name'] for p in sorted(lineup['players'], key=lambda x: x['Salary'], reverse=True)[:3]])
+                existing_top3 = set([p['Name'] for p in sorted(existing_lineup['players'], key=lambda x: x['Salary'], reverse=True)[:3]])
+                
+                # If same QB and 2 of top 3 match, it's too similar
+                if len(lineup_top3 & existing_top3) >= 2:
+                    return True
         
         return False
     
@@ -321,8 +408,32 @@ class LineupOptimizer:
         """
         Score and rank lineups
         Higher score = better for the contest type
+        Now includes exposure tracking
         """
         
+        # Track player exposure
+        player_counts = {}
+        for lineup in lineups:
+            for player in lineup['players']:
+                name = player['Name']
+                player_counts[name] = player_counts.get(name, 0) + 1
+        
+        # Add exposure data to each lineup
+        for lineup in lineups:
+            max_exposure = 0
+            exposures = []
+            
+            for player in lineup['players']:
+                name = player['Name']
+                exposure = (player_counts[name] / len(lineups)) * 100
+                exposures.append(exposure)
+                max_exposure = max(max_exposure, exposure)
+                player['Exposure'] = exposure
+            
+            lineup['max_exposure'] = max_exposure
+            lineup['avg_exposure'] = sum(exposures) / len(exposures)
+        
+        # Score each lineup
         for lineup in lineups:
             # Score combines projection and ownership based on contest type
             proj_weight = self.contest_rules['projection_weight']
@@ -332,9 +443,7 @@ class LineupOptimizer:
             proj_score = lineup['projection'] / 150  # Normalize to ~0-1
             
             # Ownership score depends on contest type
-            # For top-heavy: want low but not too low (sweet spot at ~13%)
-            # For GPP: lower is better
-            own_avg = lineup['ownership'] / 9
+            own_avg = lineup['ownership_avg']
             own_target_min, own_target_max = self.contest_rules['ownership_target_avg']
             own_target = (own_target_min + own_target_max) / 2
             
@@ -344,6 +453,10 @@ class LineupOptimizer:
             
             # Combined score
             lineup['score'] = (proj_score * proj_weight) + (own_score * own_weight)
+            
+            # Penalize if exposure is too concentrated (optional)
+            if lineup['max_exposure'] > 80:  # If any player in >80% of lineups
+                lineup['score'] *= 0.95  # Small penalty
         
         # Sort by score descending
         lineups.sort(key=lambda x: x['score'], reverse=True)
