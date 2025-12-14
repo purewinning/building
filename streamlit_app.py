@@ -245,7 +245,7 @@ with tab3:
     - ✅ **Contest-Specific Optimization** - Different strategies for different field sizes
     - ✅ **Stack Correlation** - Enforces QB + pass catcher stacking
     - ✅ **Ownership Targeting** - Balances projection vs leverage based on contest
-    - ✅ **Monte Carlo Simulation** - 10,000 tournament simulations per lineup
+    - ✅ **Monte Carlo Simulation** - 1,000 tournament simulations per lineup (fast!)
     - ✅ **Expected ROI Calculation** - See which lineups have positive expected value
     
     #### Contest Structures Supported
