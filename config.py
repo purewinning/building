@@ -13,27 +13,37 @@ CONTEST_STRUCTURES = {
     'small_gpp': {
         'name': '4,444 Entries ($250K Winner Blueprint)',
         'entries': 4444,
-        'entry': 333,
         'payout_structure': 'top_heavy',
         
         # OWNERSHIP TARGETS (from actual winner: 9.4% avg)
         'ownership_target_avg': (9, 13),  # GOLDILOCKS ZONE
         'ownership_total_range': (80, 120),  # Total combined
+        'ownership_target_total': (80, 120),  # Backward compatibility
+        
+        # PROJECTION TARGETS (backward compatibility)
+        'projection_target': (140, 155),  # Expected winning score range
         
         # PLAYER DISTRIBUTION (from actual winner structure)
         'ultra_leverage_required': (3, 4),  # <5% owned (winner had 4)
         'core_players_required': (3, 4),   # 10-25% owned (winner had 4)
         'heavy_chalk_max': 1,               # >25% owned (winner had 0)
+        'leverage_plays_count': (3, 4),    # Backward compatibility
+        'chalk_allowed': False,
+        'chalk_max_count': 0,
         
         # QB STRATEGY (Trevor Lawrence 3.7% won it)
         'qb_ownership_target': (2, 8),      # Ultra-leverage QB range
+        'qb_ownership_max': 8,              # Backward compatibility
+        'qb_ownership_preferred': (2, 8),   # Backward compatibility
         'qb_salary_range': (5000, 6500),    # Value QB to save money
         'qb_usage_pct': 0.35,               # 35% of lineups get leverage QB
+        'qb_stack_type': ['QB + 2', 'QB + 3'],  # Backward compatibility
         
         # STACKING (winner had JAX 3-piece stack)
         'game_stack_pct': 0.40,             # 40% of lineups have 3-piece stack
         'stack_min_players': 3,             # QB + 2 from same team
         'stack_ownership_target': (8, 25),  # Combined stack ownership
+        'bring_back_required': False,       # Backward compatibility
         
         # CORE RB ANCHOR (Travis Etienne 22.8% in 70% of Top 10)
         'core_rb_ownership': (18, 25),      # The "must-have" RB
@@ -57,18 +67,28 @@ CONTEST_STRUCTURES = {
         
         'ownership_target_avg': (7, 11),
         'ownership_total_range': (65, 100),
+        'ownership_target_total': (65, 100),  # Backward compatibility
+        
+        'projection_target': (135, 150),  # Backward compatibility
         
         'ultra_leverage_required': (4, 5),
         'core_players_required': (2, 3),
         'heavy_chalk_max': 1,
+        'leverage_plays_count': (4, 5),
+        'chalk_allowed': False,
+        'chalk_max_count': 0,
         
         'qb_ownership_target': (3, 10),
+        'qb_ownership_max': 10,
+        'qb_ownership_preferred': (3, 10),
         'qb_salary_range': (5000, 7000),
         'qb_usage_pct': 0.30,
+        'qb_stack_type': ['QB + 2'],
         
         'game_stack_pct': 0.35,
         'stack_min_players': 2,
         'stack_ownership_target': (10, 30),
+        'bring_back_required': False,
         
         'core_rb_ownership': (15, 25),
         'core_rb_usage_pct': 0.60,
@@ -89,18 +109,28 @@ CONTEST_STRUCTURES = {
         
         'ownership_target_avg': (5, 9),
         'ownership_total_range': (50, 80),
+        'ownership_target_total': (50, 80),  # Backward compatibility
+        
+        'projection_target': (130, 145),  # Backward compatibility
         
         'ultra_leverage_required': (5, 6),
         'core_players_required': (2, 3),
         'heavy_chalk_max': 0,
+        'leverage_plays_count': (5, 6),
+        'chalk_allowed': False,
+        'chalk_max_count': 0,
         
         'qb_ownership_target': (1, 5),
+        'qb_ownership_max': 5,
+        'qb_ownership_preferred': (1, 5),
         'qb_salary_range': (5000, 6500),
         'qb_usage_pct': 0.50,
+        'qb_stack_type': ['QB + 2', 'QB + 3'],
         
         'game_stack_pct': 0.50,
         'stack_min_players': 3,
         'stack_ownership_target': (5, 20),
+        'bring_back_required': False,
         
         'core_rb_ownership': (12, 20),
         'core_rb_usage_pct': 0.50,
