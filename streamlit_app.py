@@ -12,7 +12,7 @@ from main import DFSOptimizer
 st.set_page_config(page_title="DFS Optimizer", page_icon="🏈", layout="wide")
 
 st.title("🏈 DFS Lineup Optimizer")
-st.markdown("### Reverse Engineered")
+st.markdown("### Free Alternative to Stokastic - Reverse Engineered")
 
 # Sidebar configuration
 st.sidebar.header("⚙️ Configuration")
@@ -233,22 +233,36 @@ with tab2:
         )
         st.plotly_chart(fig1, use_container_width=True)
         
-        # Projection vs Ownership scatter
-        fig2 = px.scatter(
-            results,
-            x='ownership',
-            y='projection',
-            size='expected_roi',
-            color='expected_roi',
-            title='Projection vs Ownership',
-            labels={
-                'ownership': 'Total Ownership (%)',
-                'projection': 'Projected Points',
-                'expected_roi': 'Expected ROI (%)'
-            },
-            hover_data=['win_pct', 'cash_pct']
-        )
-        st.plotly_chart(fig2, use_container_width=True)
+        # Projection vs Ownership scatter - with error handling
+        try:
+            # Clean data for scatter plot
+            scatter_data = results[['ownership', 'projection', 'expected_roi', 'win_pct', 'cash_pct']].copy()
+            scatter_data = scatter_data.dropna()  # Remove any NaN values
+            
+            # Ensure numeric types
+            scatter_data['ownership'] = pd.to_numeric(scatter_data['ownership'], errors='coerce')
+            scatter_data['projection'] = pd.to_numeric(scatter_data['projection'], errors='coerce')
+            scatter_data['expected_roi'] = pd.to_numeric(scatter_data['expected_roi'], errors='coerce')
+            
+            fig2 = px.scatter(
+                scatter_data,
+                x='ownership',
+                y='projection',
+                size='expected_roi',
+                color='expected_roi',
+                title='Projection vs Ownership',
+                labels={
+                    'ownership': 'Total Ownership (%)',
+                    'projection': 'Projected Points',
+                    'expected_roi': 'Expected ROI (%)'
+                },
+                hover_data=['win_pct', 'cash_pct']
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Could not generate scatter plot: {str(e)}")
+            # Show simple table instead
+            st.dataframe(results[['projection', 'ownership', 'expected_roi']].head(10))
         
         # Summary statistics
         st.subheader("📊 Summary Statistics")
