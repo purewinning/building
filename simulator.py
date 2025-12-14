@@ -189,6 +189,8 @@ class MonteCarloSimulator:
                 'top10_pct': sim_result['top10_pct'],
                 'cash_pct': sim_result['cash_pct'],
                 'expected_roi': sim_result['expected_roi'],
+                'expected_winnings': sim_result['expected_winnings'],
+                'avg_placement': sim_result['avg_placement'],
                 'players': ', '.join([p['Name'] for p in lineup['players']])
             }
             
@@ -196,7 +198,19 @@ class MonteCarloSimulator:
         
         print()  # New line after progress
         
-        return pd.DataFrame(results)
+        df = pd.DataFrame(results)
+        
+        # Ensure all expected columns exist
+        if 'expected_roi' not in df.columns:
+            df['expected_roi'] = 0.0
+        if 'win_pct' not in df.columns:
+            df['win_pct'] = 0.0
+        if 'top10_pct' not in df.columns:
+            df['top10_pct'] = 0.0
+        if 'cash_pct' not in df.columns:
+            df['cash_pct'] = 0.0
+            
+        return df
 
 
 def create_payout_structure(contest_type: str, entry_fee: float) -> Dict:
