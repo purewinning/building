@@ -68,6 +68,15 @@ class DFSOptimizer:
             num_lineups=num_lineups,
             contest_type=self.contest_type
         )
+        
+        if not lineups or len(lineups) == 0:
+            print("   ❌ Failed to generate any valid lineups")
+            print("   This could be due to:")
+            print("   - Not enough players in each position")
+            print("   - Constraints too strict for available player pool")
+            print("   - Salary constraints can't be met")
+            return None, None
+            
         print(f"   ✓ Generated {len(lineups)} unique lineups")
         print()
         
