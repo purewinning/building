@@ -308,7 +308,7 @@ class SimpleOptimizer:
         }
     
     def _pick_player(self, position, max_salary: int, used_names: List[str]) -> Dict:
-        """Pick player using CONTEST-SPECIFIC strategy"""
+        """Pick player using CONTEST-SPECIFIC strategy and respecting categories"""
         
         # Handle multiple positions
         if isinstance(position, list):
@@ -329,60 +329,71 @@ class SimpleOptimizer:
         if pool.empty:
             return None
         
-        # CONTEST-SPECIFIC STRATEGY
+        # Exclude players marked as excluded
+        if 'Category' in pool.columns:
+            pool = pool[pool['Category'] != '🚫 Exclude']
+            
+            if pool.empty:
+                return None
+        
+        # CONTEST-SPECIFIC STRATEGY with category awareness
         contest_entries = self.contest_rules['entries']
         
-        if contest_entries >= 100000:
-            # MILLIONAIRE MAKER STRATEGY (150k+ entries)
-            # Need extreme leverage + ceiling
-            # 30% projection, 70% ownership leverage
+        # Add category-based score boosts
+        if 'Category' in pool.columns:
+            pool['category_boost'] = 0.0
             
+            if contest_entries >= 100000:
+                # Millionaire Maker: Boost leverage, penalize chalk
+                pool.loc[pool['Category'] == '💎 Leverage', 'category_boost'] = 0.30
+                pool.loc[pool['Category'] == '🔥 Chalk', 'category_boost'] = -0.20
+                pool.loc[pool['Category'] == '⭐ Core', 'category_boost'] = 0.10
+            elif contest_entries >= 10000:
+                # Mid GPP: Balanced
+                pool.loc[pool['Category'] == '💎 Leverage', 'category_boost'] = 0.15
+                pool.loc[pool['Category'] == '⭐ Core', 'category_boost'] = 0.15
+            else:
+                # Small GPP: Boost core and chalk
+                pool.loc[pool['Category'] == '🔥 Chalk', 'category_boost'] = 0.20
+                pool.loc[pool['Category'] == '⭐ Core', 'category_boost'] = 0.25
+                pool.loc[pool['Category'] == '💎 Leverage', 'category_boost'] = 0.05
+        else:
+            pool['category_boost'] = 0.0
+        
+        # Calculate base scores based on contest type
+        if contest_entries >= 100000:
+            # Millionaire Maker
             pool['proj_norm'] = pool['Projection'] / pool['Projection'].max()
             pool['own_leverage'] = (100 - pool['Ownership']) / 100
-            
-            # Heavily favor LOW ownership (70/30 split)
             pool['pick_score'] = (pool['proj_norm'] * 0.30) + (pool['own_leverage'] * 0.70)
-            
-            # Add boom% consideration if available
-            if 'Boom' in pool.columns:
-                pool['boom_norm'] = pool['Boom'] / pool['Boom'].max()
-                pool['pick_score'] = (pool['proj_norm'] * 0.25) + (pool['own_leverage'] * 0.60) + (pool['boom_norm'] * 0.15)
-            
-            # Pick from top 30% by leverage score (more contrarian)
-            top_n = max(1, int(len(pool) * 0.30))
+            top_pct = 0.30
             
         elif contest_entries >= 10000:
-            # MID-SIZE GPP (14k entries)
-            # Balanced: 50% projection, 50% ownership
-            
+            # Mid GPP
             pool['proj_norm'] = pool['Projection'] / pool['Projection'].max()
             pool['own_leverage'] = (100 - pool['Ownership']) / 100
-            
             pool['pick_score'] = (pool['proj_norm'] * 0.50) + (pool['own_leverage'] * 0.50)
-            
-            # Pick from top 35%
-            top_n = max(1, int(len(pool) * 0.35))
+            top_pct = 0.35
             
         else:
-            # SMALL GPP (4,444 entries)
-            # Favor projection: 70% projection, 30% ownership leverage
-            # This is what we tested earlier
-            
+            # Small GPP
             pool['proj_norm'] = pool['Projection'] / pool['Projection'].max()
             pool['own_leverage'] = (100 - pool['Ownership']) / 100
-            
             pool['pick_score'] = (pool['proj_norm'] * 0.70) + (pool['own_leverage'] * 0.30)
             
-            # 70% chance pick from top 20% (studs), 30% chance from top 40% (value)
             if np.random.random() < 0.70:
-                top_n = max(1, int(len(pool) * 0.20))
+                top_pct = 0.20
             else:
-                top_n = max(1, int(len(pool) * 0.40))
+                top_pct = 0.40
+        
+        # Apply category boost
+        pool['pick_score'] = pool['pick_score'] + pool['category_boost']
         
         # Add randomness for variety
         pool['pick_score'] *= np.random.uniform(0.90, 1.10, len(pool))
         
         # Select from top pool
+        top_n = max(1, int(len(pool) * top_pct))
         top_pool = pool.nlargest(top_n, 'pick_score')
         
         # Weight by score
