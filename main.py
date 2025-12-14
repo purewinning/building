@@ -1,5 +1,6 @@
 """
 DFS Optimizer - Main Application
+Free alternative to Stokastic's lineup builder
 """
 
 import sys
@@ -25,14 +26,15 @@ class DFSOptimizer:
         self.ownership_projector = OwnershipProjector()
         self.optimizer = WinningOptimizer(contest_type)  # NEW: $250K winning structure
         
-    def run(self, player_pool_path: str, num_lineups: int = 20, locks: dict = None) -> pd.DataFrame:
+    def run(self, player_pool_path: str, num_lineups: int = 20, locks: dict = None, **kwargs) -> pd.DataFrame:
         """
         Main workflow with optional player locks
         
         Args:
             player_pool_path: Path to CSV with DK player pool
             num_lineups: Number of lineups to generate
-            locks: Dict of locked players by position
+            locks: Dict of locked players by position (optional)
+            **kwargs: Backward compatibility
             
         Returns:
             Tuple of (results DataFrame, lineups list)
