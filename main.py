@@ -26,13 +26,14 @@ class DFSOptimizer:
         self.ownership_projector = OwnershipProjector()
         self.optimizer = SimpleOptimizer(contest_type)  # Use simple optimizer
         
-    def run(self, player_pool_path: str, num_lineups: int = 20) -> pd.DataFrame:
+    def run(self, player_pool_path: str, num_lineups: int = 20, locks: dict = None) -> pd.DataFrame:
         """
-        Main workflow: Load data -> Generate projections -> Build lineups -> Simulate
+        Main workflow with optional player locks
         
         Args:
             player_pool_path: Path to CSV with DK player pool
             num_lineups: Number of lineups to generate
+            locks: Dict of locked players by position
             
         Returns:
             Tuple of (results DataFrame, lineups list)
@@ -73,11 +74,12 @@ class DFSOptimizer:
             print("👥 Using existing ownership from file...")
         print()
         
-        # Step 4: Build lineups
+        # Step 4: Build lineups with locks
         print(f"🔨 Building {num_lineups} optimized lineups...")
         lineups = self.optimizer.generate_lineups(
             player_pool, 
-            num_lineups=num_lineups
+            num_lineups=num_lineups,
+            locks=locks
         )
         
         if not lineups or len(lineups) == 0:
