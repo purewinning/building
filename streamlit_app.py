@@ -12,7 +12,7 @@ from main import DFSOptimizer
 st.set_page_config(page_title="DFS Optimizer", page_icon="🏈", layout="wide")
 
 st.title("🏈 DFS Lineup Optimizer")
-st.markdown("### Free Alternative to Stokastic - Reverse Engineered")
+st.markdown("### Reverse Engineered")
 
 # Sidebar configuration
 st.sidebar.header("⚙️ Configuration")
@@ -137,7 +137,12 @@ with tab1:
             top10_pct = row.get('top10_pct', 0.0)
             cash_pct = row.get('cash_pct', 0.0)
             
-            with st.expander(f"**Lineup #{i+1}** - ROI: {roi:.1f}% | Proj: {row['projection']:.1f} pts", expanded=(i==0)):
+            # Get lineup metrics
+            salary_rem = lineup.get('salary_remaining', 0)
+            value = lineup.get('value', 0)
+            stack_info = lineup.get('stack', 'Unknown')
+            
+            with st.expander(f"**Lineup #{i+1}** - ROI: {roi:.1f}% | Proj: {row['projection']:.1f} pts | Stack: {stack_info}", expanded=(i==0)):
                 col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
@@ -151,20 +156,50 @@ with tab1:
                 
                 st.markdown("---")
                 
-                # Display roster
-                roster_df = pd.DataFrame([
-                    {
-                        'Position': p['Position'],
-                        'Name': p['Name'],
-                        'Team': p['Team'],
+                # Additional metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Salary Left", f"${salary_rem:,}")
+                with col2:
+                    st.metric("Value", f"{value:.2f} pts/$1k")
+                with col3:
+                    own_avg = lineup.get('ownership_avg', row['ownership']/9)
+                    st.metric("Avg Own%", f"{own_avg:.1f}%")
+                
+                st.markdown("---")
+                
+                # Display roster in proper order with emojis
+                roster_data = []
+                for p in lineup['players']:
+                    # Handle FLEX display
+                    pos = p.get('PositionSlot', p['Position'])
+                    
+                    # Add emoji indicators
+                    own_pct = p['Ownership']
+                    if own_pct > 25:
+                        indicator = "🔥 Chalk"
+                    elif own_pct < 5:
+                        indicator = "💎 Leverage"
+                    else:
+                        indicator = "✓ Core"
+                    
+                    roster_data.append({
+                        'Position': pos,
+                        'Player': p['Name'],
+                        'Team': p.get('Team', 'N/A'),
                         'Salary': f"${p['Salary']:,}",
                         'Projection': f"{p['Projection']:.1f}",
-                        'Ownership': f"{p['Ownership']:.1f}%"
-                    }
-                    for p in lineup['players']
-                ])
+                        'Own%': f"{own_pct:.1f}%",
+                        'Type': indicator
+                    })
                 
+                roster_df = pd.DataFrame(roster_data)
                 st.dataframe(roster_df, use_container_width=True, hide_index=True)
+                
+                # Game stacks info
+                game_stacks = lineup.get('game_stacks', [])
+                if game_stacks and game_stacks != ["No game stacks"]:
+                    st.info(f"🎯 Game Stacks: {', '.join(game_stacks)}")
                 
                 # Summary row
                 st.markdown(f"**Total: ${row['salary']:,} / $50,000 | {row['projection']:.1f} pts | {row['ownership']:.1f}% own**")
