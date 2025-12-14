@@ -47,42 +47,56 @@ class MonteCarloSimulator:
             'placements': []
         }
         
-        # Run simulations
-        for i in range(self.iterations):
-            # Simulate this lineup's score
-            lineup_score = self._simulate_score(lineup)
+        try:
+            # Run simulations
+            for i in range(self.iterations):
+                # Simulate this lineup's score
+                lineup_score = self._simulate_score(lineup)
+                
+                # Simulate field scores
+                field_scores = self._simulate_field(field_ownership)
+                
+                # Determine placement
+                placement = self._calculate_placement(lineup_score, field_scores)
+                
+                # Track results
+                results['placements'].append(placement)
+                
+                if placement == 1:
+                    results['win_count'] += 1
+                
+                top_10pct = int(self.contest_entries * 0.10)
+                if placement <= top_10pct:
+                    results['top10_count'] += 1
+                
+                # Check if cashed
+                payout = self._get_payout(placement)
+                if payout > 0:
+                    results['cash_count'] += 1
+                    results['total_winnings'] += payout
             
-            # Simulate field scores
-            field_scores = self._simulate_field(field_ownership)
+            # Calculate percentages
+            win_pct = (results['win_count'] / self.iterations) * 100
+            top10_pct = (results['top10_count'] / self.iterations) * 100
+            cash_pct = (results['cash_count'] / self.iterations) * 100
             
-            # Determine placement
-            placement = self._calculate_placement(lineup_score, field_scores)
+            # Calculate expected value and ROI
+            avg_winnings = results['total_winnings'] / self.iterations
+            entry_fee = self.payout_structure['entry_fee']
+            expected_roi = ((avg_winnings - entry_fee) / entry_fee) * 100
             
-            # Track results
-            results['placements'].append(placement)
-            
-            if placement == 1:
-                results['win_count'] += 1
-            
-            top_10pct = int(self.contest_entries * 0.10)
-            if placement <= top_10pct:
-                results['top10_count'] += 1
-            
-            # Check if cashed
-            payout = self._get_payout(placement)
-            if payout > 0:
-                results['cash_count'] += 1
-                results['total_winnings'] += payout
-        
-        # Calculate percentages
-        win_pct = (results['win_count'] / self.iterations) * 100
-        top10_pct = (results['top10_count'] / self.iterations) * 100
-        cash_pct = (results['cash_count'] / self.iterations) * 100
-        
-        # Calculate expected value and ROI
-        avg_winnings = results['total_winnings'] / self.iterations
-        entry_fee = self.payout_structure['entry_fee']
-        expected_roi = ((avg_winnings - entry_fee) / entry_fee) * 100
+        except Exception as e:
+            print(f"Error in simulation: {e}")
+            # Return default values on error
+            return {
+                'win_pct': 0.0,
+                'top10_pct': 0.0,
+                'cash_pct': 0.0,
+                'expected_winnings': 0.0,
+                'expected_roi': 0.0,
+                'avg_placement': self.contest_entries / 2,
+                'median_placement': self.contest_entries / 2
+            }
         
         return {
             'win_pct': win_pct,
