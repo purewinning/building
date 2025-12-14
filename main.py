@@ -1,6 +1,5 @@
 """
 DFS Optimizer - Main Application
-Free alternative to Stokastic's lineup builder
 """
 
 import sys
@@ -9,7 +8,7 @@ import argparse
 from typing import List, Dict
 from config import CONTEST_STRUCTURES, TOP_LINEUPS_TO_RETURN
 from projections import ProjectionEngine, OwnershipProjector
-from simple_optimizer import SimpleOptimizer  # Use simple, working optimizer
+from winning_optimizer import WinningOptimizer  # NEW: Use $250K winning structure
 from simulator import MonteCarloSimulator, create_payout_structure
 
 
@@ -24,7 +23,7 @@ class DFSOptimizer:
         # Initialize components
         self.projection_engine = ProjectionEngine()
         self.ownership_projector = OwnershipProjector()
-        self.optimizer = SimpleOptimizer(contest_type)  # Use simple optimizer
+        self.optimizer = WinningOptimizer(contest_type)  # NEW: $250K winning structure
         
     def run(self, player_pool_path: str, num_lineups: int = 20, locks: dict = None) -> pd.DataFrame:
         """
