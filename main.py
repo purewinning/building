@@ -307,10 +307,11 @@ class DFSOptimizer:
             salary_rem = lineup.get('salary_remaining', 0)
             value = lineup.get('value', 0)
             own_avg = lineup.get('ownership_avg', row['ownership']/9)
+            own_target = lineup.get('ownership_target', 'N/A')
             
             print(f"Salary: ${row['salary']:,} / $50,000 (${salary_rem:,} left)")
             print(f"Projection: {row['projection']:.1f} pts | Value: {value:.2f} pts/$1k")
-            print(f"Ownership: {row['ownership']:.1f}% total | {own_avg:.1f}% avg per player")
+            print(f"Ownership: {row['ownership']:.1f}% total | {own_avg:.1f}% avg (target: {own_target})")
             print()
             
             # Stack info
