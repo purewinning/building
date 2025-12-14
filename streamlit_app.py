@@ -253,13 +253,25 @@ with tab1:
                 locks = st.session_state.get('locked_players', {})
                 
                 # Run optimization
-                if use_demo:
-                    results, lineups = optimizer.run('demo', num_lineups=num_lineups, locks=locks)
-                else:
-                    # Save uploaded file temporarily
-                    with open('/tmp/player_pool.csv', 'wb') as f:
-                        f.write(uploaded_file.getbuffer())
-                    results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups, locks=locks)
+                # Try with locks first, fall back to without if method doesn't support it
+                try:
+                    if use_demo:
+                        results, lineups = optimizer.run('demo', num_lineups=num_lineups, locks=locks)
+                    else:
+                        # Save uploaded file temporarily
+                        with open('/tmp/player_pool.csv', 'wb') as f:
+                            f.write(uploaded_file.getbuffer())
+                        results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups, locks=locks)
+                except TypeError as e:
+                    # Old version doesn't support locks - run without them
+                    if 'locks' in str(e):
+                        st.warning("⚠️ Running without player locks (using older optimizer version). Please clear Streamlit cache to enable locks.")
+                        if use_demo:
+                            results, lineups = optimizer.run('demo', num_lineups=num_lineups)
+                        else:
+                            results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups)
+                    else:
+                        raise  # Different error, re-raise it
                 
                 # Verify results
                 if results is None or lineups is None or len(lineups) == 0:
