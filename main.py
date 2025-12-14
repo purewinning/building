@@ -72,7 +72,7 @@ class DFSOptimizer:
         print()
         
         # Step 5: Simulate tournaments
-        print("🎲 Running Monte Carlo simulations (10,000 iterations)...")
+        print("🎲 Running Monte Carlo simulations (1,000 iterations per lineup)...")
         payout_structure = create_payout_structure(self.contest_type, self.entry_fee)
         simulator = MonteCarloSimulator(
             self.contest_rules['entries'],
@@ -83,9 +83,8 @@ class DFSOptimizer:
         print("   ✓ Simulations complete")
         print()
         
-        # Step 6: Display results (only in CLI mode, not when called from Streamlit)
-        if player_pool_path != 'demo' or len(sys.argv) > 1:
-            self._display_results(results, lineups)
+        # Step 6: Display results (only in CLI mode with --display flag)
+        # Don't display in Streamlit or when called programmatically
         
         return results, lineups
     
@@ -347,6 +346,10 @@ def main():
         player_pool_path=args.players,
         num_lineups=args.num_lineups
     )
+    
+    # Display results for CLI
+    if results is not None and lineups is not None:
+        optimizer._display_results(results, lineups)
 
 
 if __name__ == '__main__':
