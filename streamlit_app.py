@@ -64,7 +64,7 @@ with tab1:
         uploaded_file = st.file_uploader(
             "Upload Player Pool CSV",
             type=['csv'],
-            help="CSV should have columns: Name, Position, Salary, Team, Opponent"
+            help="CSV should have columns: Name, Position, Salary, Team, Opponent, Projection, Ownership"
         )
         
         if uploaded_file is None:
@@ -72,6 +72,74 @@ with tab1:
             use_demo = True
         else:
             use_demo = False
+            
+            # PLAYER CATEGORIZATION INTERFACE
+            st.markdown("---")
+            st.markdown("### 🎯 Categorize Players")
+            
+            # Load data
+            import pandas as pd
+            df = pd.read_csv(uploaded_file)
+            
+            # Rename columns
+            if 'Player' in df.columns:
+                df = df.rename(columns={'Player': 'Name', 'Ownership %': 'Ownership'})
+            
+            # Auto-categorize
+            def auto_categorize(row):
+                own = row.get('Ownership', 0)
+                if own >= 25:
+                    return "🔥 Chalk"
+                elif own <= 5:
+                    return "💎 Leverage"
+                elif own <= 15:
+                    return "⭐ Core"
+                else:
+                    return "✓ Flex"
+            
+            if 'Category' not in df.columns:
+                df['Category'] = df.apply(auto_categorize, axis=1)
+            
+            # Category breakdown
+            col_a, col_b, col_c, col_d = st.columns(4)
+            with col_a:
+                st.metric("🔥 Chalk", len(df[df['Category'] == '🔥 Chalk']))
+            with col_b:
+                st.metric("💎 Leverage", len(df[df['Category'] == '💎 Leverage']))
+            with col_c:
+                st.metric("⭐ Core", len(df[df['Category'] == '⭐ Core']))
+            with col_d:
+                st.metric("✓ Flex", len(df[df['Category'] == '✓ Flex']))
+            
+            # Show top players by category
+            with st.expander("📋 View/Edit Player Categories"):
+                category_options = ['🔥 Chalk', '💎 Leverage', '⭐ Core', '✓ Flex', '🚫 Exclude']
+                
+                edited_df = st.data_editor(
+                    df[['Name', 'Position', 'Team', 'Salary', 'Projection', 'Ownership', 'Category']].head(50),
+                    column_config={
+                        "Category": st.column_config.SelectboxColumn(
+                            "Category",
+                            options=category_options,
+                            required=True,
+                        ),
+                        "Salary": st.column_config.NumberColumn(format="$%d"),
+                        "Projection": st.column_config.NumberColumn(format="%.1f"),
+                        "Ownership": st.column_config.NumberColumn(format="%.1f%%"),
+                    },
+                    hide_index=True,
+                    height=300
+                )
+                
+                if st.button("💾 Save Edits"):
+                    # Update categories
+                    for idx, row in edited_df.iterrows():
+                        df.loc[df['Name'] == row['Name'], 'Category'] = row['Category']
+                    st.success("✅ Categories updated!")
+            
+            # Save categorized data
+            df.to_csv('/tmp/player_pool.csv', index=False)
+            st.markdown("---")
     
     with col2:
         st.markdown("### Quick Actions")
