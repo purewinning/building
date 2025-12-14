@@ -301,21 +301,47 @@ class DFSOptimizer:
             top10_pct = row.get('top10_pct', 0.0)
             cash_pct = row.get('cash_pct', 0.0)
             
-            print(f"Expected ROI: {roi:.1f}%")
-            print(f"Win Probability: {win_pct:.3f}%")
-            print(f"Top 10% Rate: {top10_pct:.1f}%")
-            print(f"Cash Rate: {cash_pct:.1f}%")
-            print()
-            print(f"Salary: ${row['salary']:,} / $50,000")
-            print(f"Projection: {row['projection']:.1f} pts")
-            print(f"Ownership: {row['ownership']:.1f}%")
+            print(f"Expected ROI: {roi:.1f}% | Win: {win_pct:.3f}% | Top 10%: {top10_pct:.1f}% | Cash: {cash_pct:.1f}%")
             print()
             
-            # Display roster
-            for player in lineup['players']:
-                print(f"  {player['Position']:3} | {player['Name']:25} | "
-                      f"${player['Salary']:>5,} | {player['Projection']:>5.1f} pts | "
-                      f"{player['Ownership']:>4.1f}%")
+            # Salary and projection info
+            salary_rem = lineup.get('salary_remaining', 0)
+            value = lineup.get('value', 0)
+            own_avg = lineup.get('ownership_avg', row['ownership']/9)
+            
+            print(f"Salary: ${row['salary']:,} / $50,000 (${salary_rem:,} left)")
+            print(f"Projection: {row['projection']:.1f} pts | Value: {value:.2f} pts/$1k")
+            print(f"Ownership: {row['ownership']:.1f}% total | {own_avg:.1f}% avg per player")
+            print()
+            
+            # Stack info
+            stack_info = lineup.get('stack', 'Unknown')
+            print(f"Stack: {stack_info}")
+            game_stacks = lineup.get('game_stacks', [])
+            if game_stacks and game_stacks != ["No game stacks"]:
+                print(f"Game Stacks: {', '.join(game_stacks)}")
+            print()
+            
+            # Display roster in proper order
+            print(f"{'POS':<12} | {'PLAYER':<25} | {'TEAM':<5} | {'SALARY':<8} | {'PROJ':<6} | {'OWN%':<6}")
+            print("-" * 80)
+            
+            for p in lineup['players']:
+                # Handle FLEX display
+                pos = p.get('PositionSlot', p['Position'])
+                
+                # Color code by ownership
+                own_pct = p['Ownership']
+                if own_pct > 25:
+                    own_marker = "🔥"  # Chalk
+                elif own_pct < 5:
+                    own_marker = "💎"  # Leverage
+                else:
+                    own_marker = "  "
+                
+                team = p.get('Team', 'N/A')
+                
+                print(f"{pos:<12} | {p['Name']:<25} | {team:<5} | ${p['Salary']:<7,} | {p['Projection']:<6.1f} | {own_pct:<5.1f}% {own_marker}")
             
             print()
         
