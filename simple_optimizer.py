@@ -47,80 +47,196 @@ class SimpleOptimizer:
         return lineups
     
     def _build_one_lineup(self) -> Dict:
-        """Build a single valid lineup - maximize salary usage for max points"""
+        """Build a single valid lineup with INTELLIGENT CORRELATION STACKING"""
         
         lineup = []
         budget = SALARY_CAP
+        correlations = []  # Track all correlations
         
-        # Step 1: QB - allow expensive QBs (can spend up to full max salary)
-        qb_max = min(7500, budget)  # Full $7500 allowed
+        # Step 1: Pick QB first
+        qb_max = min(7500, budget)
         qb = self._pick_player('QB', qb_max, [])
         if not qb:
             return None
         lineup.append(qb)
         budget -= qb['Salary']
         
-        # Step 2: First RB - can be elite ($9k CMC level)
-        rb1_max = min(9000, int(budget * 0.25))  # Up to $9k or 25% of remaining
-        rb1 = self._pick_player('RB', rb1_max, [p['Name'] for p in lineup])
-        if not rb1:
-            return None
-        lineup.append(rb1)
-        budget -= rb1['Salary']
+        qb_team = qb['Team']
+        qb_opponent = qb.get('Opponent', '')
         
-        # Step 3: Second RB - still allow expensive
-        rb2_max = min(9000, int(budget * 0.28))  # Up to $9k or 28% of remaining
-        rb2 = self._pick_player('RB', rb2_max, [p['Name'] for p in lineup])
-        if not rb2:
-            return None
-        lineup.append(rb2)
-        budget -= rb2['Salary']
+        # Step 2: MANDATORY QB STACK - Pick 1-2 pass catchers from QB's team
+        stack_budget = int(budget * 0.30)
+        stack_pool = self.player_pool[
+            (self.player_pool['Team'] == qb_team) &
+            (self.player_pool['Position'].isin(['WR', 'TE'])) &
+            (self.player_pool['Salary'] <= stack_budget) &
+            (self.player_pool['Projection'] > 0)
+        ].sort_values('Projection', ascending=False)
         
-        # Step 4: First WR - elite tier ($8700 Puka level)
-        wr1_max = min(8700, int(budget * 0.28))  # Up to $8700 or 28% of remaining
-        wr1 = self._pick_player('WR', wr1_max, [p['Name'] for p in lineup])
-        if not wr1:
-            return None
-        lineup.append(wr1)
-        budget -= wr1['Salary']
+        if stack_pool.empty:
+            return None  # NO STACK = REJECT LINEUP
         
-        # Step 5: Second WR - still elite tier
-        wr2_max = min(8700, int(budget * 0.32))  # Up to $8700 or 32% of remaining
-        wr2 = self._pick_player('WR', wr2_max, [p['Name'] for p in lineup])
-        if not wr2:
-            return None
-        lineup.append(wr2)
-        budget -= wr2['Salary']
+        # Pick 1-2 stack pieces
+        stack_count = min(2, len(stack_pool))
+        stack_players = []
+        for i in range(stack_count):
+            if len(stack_pool) > i:
+                stacker = stack_pool.iloc[i].to_dict()
+                stack_players.append(stacker)
+                lineup.append(stacker)
+                budget -= stacker['Salary']
+                correlations.append(f"{qb['Name']}-{stacker['Name']} (same team)")
         
-        # Step 6: Third WR - allow expensive
-        wr3_max = min(8700, int(budget * 0.38))  # Up to $8700 or 38% of remaining
-        wr3 = self._pick_player('WR', wr3_max, [p['Name'] for p in lineup])
-        if not wr3:
-            return None
-        lineup.append(wr3)
-        budget -= wr3['Salary']
+        # Track positions filled
+        positions_filled = {'QB': 1, 'WR': 0, 'TE': 0, 'RB': 0}
+        for p in stack_players:
+            positions_filled[p['Position']] += 1
         
-        # Step 7: TE - use most of what's left (save only for FLEX + DST)
-        te_max = int(budget * 0.50)  # Use 50% of remaining for TE
-        te = self._pick_player('TE', te_max, [p['Name'] for p in lineup])
-        if not te:
-            return None
-        lineup.append(te)
-        budget -= te['Salary']
+        used_names = [p['Name'] for p in lineup]
         
-        # Step 8: FLEX (RB or WR) - use most of remaining (save only for DST)
-        flex_max = int(budget * 0.70)  # Use 70% of remaining for FLEX
-        flex = self._pick_player(['RB', 'WR'], flex_max, [p['Name'] for p in lineup])
+        # Step 3: GAME STACK DECISION - Should we bring back opponent?
+        # 40% chance to add a bring-back (leverage play in high-scoring games)
+        bring_back_added = False
+        if np.random.random() < 0.40 and qb_opponent:
+            # Look for WR/RB from opponent team (cheap-ish for leverage)
+            bring_back_pool = self.player_pool[
+                (self.player_pool['Team'] == qb_opponent) &
+                (self.player_pool['Position'].isin(['WR', 'RB'])) &
+                (self.player_pool['Salary'] <= budget * 0.20) &
+                (self.player_pool['Ownership'] < 15) &  # Prefer lower owned
+                (~self.player_pool['Name'].isin(used_names))
+            ].sort_values('Projection', ascending=False)
+            
+            if not bring_back_pool.empty:
+                bring_back = bring_back_pool.iloc[0].to_dict()
+                lineup.append(bring_back)
+                budget -= bring_back['Salary']
+                used_names.append(bring_back['Name'])
+                positions_filled[bring_back['Position']] += 1
+                bring_back_added = True
+                correlations.append(f"{bring_back['Name']} (bring-back vs {qb_team})")
+        
+        # Step 4: Fill RBs (need 2 total, accounting for bring-back)
+        rbs_needed = 2 - positions_filled.get('RB', 0)
+        for i in range(rbs_needed):
+            rb_max = min(9000, int(budget * 0.25))
+            rb = self._pick_player('RB', rb_max, used_names)
+            if not rb:
+                return None
+            lineup.append(rb)
+            budget -= rb['Salary']
+            used_names.append(rb['Name'])
+            positions_filled['RB'] = positions_filled.get('RB', 0) + 1
+        
+        # Step 5: Fill remaining WRs (need 3 total)
+        wrs_needed = 3 - positions_filled['WR']
+        for i in range(wrs_needed):
+            wr_max = min(8700, int(budget * (0.28 if i == 0 else 0.32)))
+            wr = self._pick_player('WR', wr_max, used_names)
+            if not wr:
+                return None
+            lineup.append(wr)
+            budget -= wr['Salary']
+            used_names.append(wr['Name'])
+            positions_filled['WR'] += 1
+        
+        # Step 6: Fill TE if needed
+        if positions_filled['TE'] == 0:
+            te_max = int(budget * 0.50)
+            te = self._pick_player('TE', te_max, used_names)
+            if not te:
+                return None
+            lineup.append(te)
+            budget -= te['Salary']
+            used_names.append(te['Name'])
+            positions_filled['TE'] += 1
+        
+        # Step 7: FLEX - Intelligent correlation opportunity
+        # 50% chance: same team as QB (triple stack)
+        # 30% chance: opponent team (game stack)
+        # 20% chance: best available (contrarian)
+        
+        flex_max = int(budget * 0.70)
+        flex_choice = np.random.random()
+        
+        if flex_choice < 0.50:
+            # Try to triple stack (same team as QB)
+            flex_pool = self.player_pool[
+                (self.player_pool['Position'].isin(['RB', 'WR'])) &
+                (self.player_pool['Team'] == qb_team) &
+                (self.player_pool['Salary'] <= flex_max) &
+                (~self.player_pool['Name'].isin(used_names))
+            ].sort_values('Projection', ascending=False)
+            
+            if not flex_pool.empty:
+                flex = flex_pool.iloc[0].to_dict()
+                correlations.append(f"{flex['Name']} (triple stack with {qb_team})")
+            else:
+                flex_pool = self.player_pool[
+                    (self.player_pool['Position'].isin(['RB', 'WR'])) &
+                    (self.player_pool['Salary'] <= flex_max) &
+                    (~self.player_pool['Name'].isin(used_names))
+                ].sort_values('Projection', ascending=False)
+                flex = flex_pool.iloc[0].to_dict() if not flex_pool.empty else None
+        else:
+            # Standard FLEX pick
+            flex = self._pick_player(['RB', 'WR'], flex_max, used_names)
+        
         if not flex:
             return None
+        
         flex['PositionSlot'] = f"FLEX ({flex['Position']})"
         lineup.append(flex)
         budget -= flex['Salary']
+        used_names.append(flex['Name'])
         
-        # Step 9: DST - spend what's left (don't leave money on table)
-        dst = self._pick_player('DST', budget, [p['Name'] for p in lineup])
+        # Step 8: DST - INTELLIGENT CORRELATION
+        # Priority 1: RB+DST stack (40% chance) - leverage play
+        # Priority 2: Opponent of our QB (30% chance) - contrarian
+        # Priority 3: Best available (30% chance)
+        
+        dst_choice = np.random.random()
+        dst = None
+        
+        # Find our RBs
+        our_rbs = [p for p in lineup if p['Position'] == 'RB']
+        
+        if dst_choice < 0.40 and len(our_rbs) > 0:
+            # RB+DST STACK - Pick DST facing our RB's team (negative correlation leverage)
+            # If we have CMC (SF), pick the DST playing against SF
+            rb_teams = [rb.get('Team') for rb in our_rbs]
+            
+            for rb_team in rb_teams:
+                dst_pool = self.player_pool[
+                    (self.player_pool['Position'] == 'DST') &
+                    (self.player_pool.get('Opponent', '') == rb_team) &  # DST vs our RB's team
+                    (self.player_pool['Salary'] <= budget)
+                ].sort_values('Projection', ascending=False)
+                
+                if not dst_pool.empty:
+                    dst = dst_pool.iloc[0].to_dict()
+                    correlations.append(f"{dst['Name']} DST vs {our_rbs[0]['Name']}'s team (contrarian leverage)")
+                    break
+        
+        elif dst_choice < 0.70 and qb_opponent:
+            # Pick DST from opponent team (they're defending our QB)
+            dst_pool = self.player_pool[
+                (self.player_pool['Position'] == 'DST') &
+                (self.player_pool['Team'] == qb_opponent) &
+                (self.player_pool['Salary'] <= budget)
+            ]
+            
+            if not dst_pool.empty:
+                dst = dst_pool.iloc[0].to_dict()
+                correlations.append(f"{dst['Name']} DST (opponent of our QB)")
+        
+        # Fallback: Best DST available
+        if not dst:
+            dst = self._pick_player('DST', budget, used_names)
+        
         if not dst:
             return None
+        
         lineup.append(dst)
         budget -= dst['Salary']
         
@@ -130,34 +246,49 @@ class SimpleOptimizer:
         total_own = sum(p['Ownership'] for p in lineup)
         avg_own = total_own / 9
         
-        # Validate we're using enough of the salary cap (at least $48k)
+        # VALIDATE STACKING - Must have at least 1 pass catcher from QB's team
+        stack_teammates = [p for p in lineup if p.get('Team') == qb_team and p['Position'] != 'QB']
+        if len(stack_teammates) == 0:
+            return None  # NO STACK = INVALID LINEUP
+        
+        # Validate salary minimum
         if total_sal < 48000:
-            return None  # Not spending enough, try again
+            return None
         
         # CONTEST-SPECIFIC ownership validation
         own_target_min, own_target_max = self.contest_rules['ownership_target_avg']
         contest_entries = self.contest_rules['entries']
         
         if contest_entries >= 100000:
-            # MILLIONAIRE MAKER: Very strict low ownership
-            # Target: 3-8% avg, allow up to 15% max
             if avg_own > 15:
-                return None  # Too chalky for Milly Maker
-                
+                return None
         elif contest_entries >= 10000:
-            # MID GPP: Moderate ownership
-            # Target: 5-10% avg, allow up to 20% max
             if avg_own > 20:
                 return None
-                
         else:
-            # SMALL GPP: More relaxed, can play chalk
-            # Target: 12-17% avg, allow wide range
             own_min_relaxed = own_target_min * 0.50
             own_max_relaxed = own_target_max * 1.80
-            
             if avg_own < own_min_relaxed or avg_own > own_max_relaxed:
                 return None
+        
+        # Build stack description
+        stack_positions = [p['Position'] for p in stack_teammates]
+        primary_stack = f"{qb_team} Stack: QB + {', '.join(stack_positions)}"
+        
+        # Identify all game stacks
+        game_stacks = {}
+        for p in lineup:
+            if p['Position'] != 'DST':
+                team = p.get('Team', '')
+                opp = p.get('Opponent', '')
+                if team and opp:
+                    game_key = tuple(sorted([team, opp]))
+                    game_stacks[game_key] = game_stacks.get(game_key, 0) + 1
+        
+        game_stack_desc = []
+        for game, count in game_stacks.items():
+            if count >= 2:
+                game_stack_desc.append(f"{game[0]} vs {game[1]} ({count} players)")
         
         return {
             'players': lineup,
@@ -168,7 +299,12 @@ class SimpleOptimizer:
             'ownership_avg': avg_own,
             'value': total_proj / (total_sal / 1000),
             'ownership_target': f"{own_target_min}-{own_target_max}%",
-            'contest_type': self.contest_rules['name']
+            'contest_type': self.contest_rules['name'],
+            'stack': primary_stack,
+            'stack_team': qb_team,
+            'stack_count': len(stack_teammates),
+            'correlations': correlations,
+            'game_stacks': game_stack_desc if game_stack_desc else ["Single game focus"]
         }
     
     def _pick_player(self, position, max_salary: int, used_names: List[str]) -> Dict:
