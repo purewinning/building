@@ -94,8 +94,7 @@ class LineupOptimizer:
     
     def _select_qb(self) -> pd.Series:
         """
-        Select QB based on contest rules
-        Prefer QBs with ownership in target range
+        Select QB based on contest rules and value
         """
         qbs = self.player_pool[self.player_pool['Position'] == 'QB'].copy()
         
@@ -113,15 +112,17 @@ class LineupOptimizer:
         ]
         
         if not preferred_qbs.empty:
-            # Weight selection by projection + ownership value
-            weights = self._calculate_selection_weights(preferred_qbs)
+            # Weight by value (projection per $1k), not just projection
+            preferred_qbs['TempValue'] = preferred_qbs['Projection'] / (preferred_qbs['Salary'] / 1000)
+            weights = preferred_qbs['TempValue'] / preferred_qbs['TempValue'].sum()
             qb = preferred_qbs.sample(n=1, weights=weights).iloc[0]
         else:
             # Fall back to any QB under max ownership
             valid_qbs = qbs[qbs['Ownership'] <= max_own]
             if valid_qbs.empty:
                 return None
-            weights = self._calculate_selection_weights(valid_qbs)
+            valid_qbs['TempValue'] = valid_qbs['Projection'] / (valid_qbs['Salary'] / 1000)
+            weights = valid_qbs['TempValue'] / valid_qbs['TempValue'].sum()
             qb = valid_qbs.sample(n=1, weights=weights).iloc[0]
         
         return qb
@@ -246,14 +247,20 @@ class LineupOptimizer:
         if available.empty:
             return None
         
-        # Weight by projection and value
-        weights = self._calculate_selection_weights(available)
+        # For expensive positions early in fill, prefer cheaper options to save cap space
+        # Weight by value (pts/$) rather than raw projection
+        available['TempValue'] = available['Projection'] / (available['Salary'] / 1000)
+        
+        # Add some randomness - weight by value but allow variation
+        weights = available['TempValue'] ** 2  # Square to emphasize value
+        weights = weights / weights.sum()
+        
         selected = available.sample(n=1, weights=weights).iloc[0]
         
         return selected.to_dict()
     
     def _select_flex(self, used_players: List[str], budget: int) -> Dict:
-        """Select FLEX (RB/WR/TE)"""
+        """Select FLEX (RB/WR/TE) - prefer value plays to use remaining budget"""
         available = self.player_pool[
             (self.player_pool['Position'].isin(['RB', 'WR', 'TE'])) &
             (~self.player_pool['Name'].isin(used_players)) &
@@ -263,13 +270,17 @@ class LineupOptimizer:
         if available.empty:
             return None
         
-        weights = self._calculate_selection_weights(available)
+        # Weight by value
+        available['TempValue'] = available['Projection'] / (available['Salary'] / 1000)
+        weights = available['TempValue'] ** 2
+        weights = weights / weights.sum()
+        
         selected = available.sample(n=1, weights=weights).iloc[0]
         
         return selected.to_dict()
     
     def _select_dst(self, used_players: List[str], budget: int) -> Dict:
-        """Select defense"""
+        """Select defense - usually min price"""
         available = self.player_pool[
             (self.player_pool['Position'] == 'DST') &
             (~self.player_pool['Name'].isin(used_players)) &
@@ -279,8 +290,12 @@ class LineupOptimizer:
         if available.empty:
             return None
         
-        # DST selection is more random (low correlation with rest of lineup)
-        selected = available.sample(n=1).iloc[0]
+        # Prefer cheap DSTs (common strategy) but with some variance
+        available['TempValue'] = available['Projection'] / (available['Salary'] / 1000)
+        weights = available['TempValue']
+        weights = weights / weights.sum()
+        
+        selected = available.sample(n=1, weights=weights).iloc[0]
         
         return selected.to_dict()
     
