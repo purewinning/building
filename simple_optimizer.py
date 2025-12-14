@@ -47,47 +47,69 @@ class SimpleOptimizer:
         return lineups
     
     def _build_one_lineup(self) -> Dict:
-        """Build a single valid lineup - use almost entire salary cap"""
+        """Build a single valid lineup - maximize salary usage for max points"""
         
         lineup = []
         budget = SALARY_CAP
         
-        # Step 1: Pick QB first (we have full budget)
-        qb_max = min(7500, int(budget * 0.16))  # Up to $7500 or 16% of cap
+        # Step 1: QB - allow expensive QBs (can spend up to full max salary)
+        qb_max = min(7500, budget)  # Full $7500 allowed
         qb = self._pick_player('QB', qb_max, [])
         if not qb:
             return None
         lineup.append(qb)
         budget -= qb['Salary']
         
-        # Step 2: Pick 2 RBs (can be expensive)
-        for i in range(2):
-            rb_max = int(budget * 0.22)  # Each RB can be up to 22% of remaining
-            rb = self._pick_player('RB', rb_max, [p['Name'] for p in lineup])
-            if not rb:
-                return None
-            lineup.append(rb)
-            budget -= rb['Salary']
+        # Step 2: First RB - can be elite ($9k CMC level)
+        rb1_max = min(9000, int(budget * 0.25))  # Up to $9k or 25% of remaining
+        rb1 = self._pick_player('RB', rb1_max, [p['Name'] for p in lineup])
+        if not rb1:
+            return None
+        lineup.append(rb1)
+        budget -= rb1['Salary']
         
-        # Step 3: Pick 3 WRs (WRs are expensive studs)
-        for i in range(3):
-            wr_max = int(budget * 0.24)  # Each WR can be up to 24% of remaining
-            wr = self._pick_player('WR', wr_max, [p['Name'] for p in lineup])
-            if not wr:
-                return None
-            lineup.append(wr)
-            budget -= wr['Salary']
+        # Step 3: Second RB - still allow expensive
+        rb2_max = min(9000, int(budget * 0.28))  # Up to $9k or 28% of remaining
+        rb2 = self._pick_player('RB', rb2_max, [p['Name'] for p in lineup])
+        if not rb2:
+            return None
+        lineup.append(rb2)
+        budget -= rb2['Salary']
         
-        # Step 4: Pick TE (can be cheap or expensive)
-        te_max = int(budget * 0.45)  # Use up to 45% for TE
+        # Step 4: First WR - elite tier ($8700 Puka level)
+        wr1_max = min(8700, int(budget * 0.28))  # Up to $8700 or 28% of remaining
+        wr1 = self._pick_player('WR', wr1_max, [p['Name'] for p in lineup])
+        if not wr1:
+            return None
+        lineup.append(wr1)
+        budget -= wr1['Salary']
+        
+        # Step 5: Second WR - still elite tier
+        wr2_max = min(8700, int(budget * 0.32))  # Up to $8700 or 32% of remaining
+        wr2 = self._pick_player('WR', wr2_max, [p['Name'] for p in lineup])
+        if not wr2:
+            return None
+        lineup.append(wr2)
+        budget -= wr2['Salary']
+        
+        # Step 6: Third WR - allow expensive
+        wr3_max = min(8700, int(budget * 0.38))  # Up to $8700 or 38% of remaining
+        wr3 = self._pick_player('WR', wr3_max, [p['Name'] for p in lineup])
+        if not wr3:
+            return None
+        lineup.append(wr3)
+        budget -= wr3['Salary']
+        
+        # Step 7: TE - use most of what's left (save only for FLEX + DST)
+        te_max = int(budget * 0.50)  # Use 50% of remaining for TE
         te = self._pick_player('TE', te_max, [p['Name'] for p in lineup])
         if not te:
             return None
         lineup.append(te)
         budget -= te['Salary']
         
-        # Step 5: Pick FLEX (RB or WR) - use most of remaining
-        flex_max = int(budget * 0.65)  # Use 65% of what's left
+        # Step 8: FLEX (RB or WR) - use most of remaining (save only for DST)
+        flex_max = int(budget * 0.70)  # Use 70% of remaining for FLEX
         flex = self._pick_player(['RB', 'WR'], flex_max, [p['Name'] for p in lineup])
         if not flex:
             return None
@@ -95,7 +117,7 @@ class SimpleOptimizer:
         lineup.append(flex)
         budget -= flex['Salary']
         
-        # Step 6: Pick DST (use what's left, usually $2-4k)
+        # Step 9: DST - spend what's left (don't leave money on table)
         dst = self._pick_player('DST', budget, [p['Name'] for p in lineup])
         if not dst:
             return None
@@ -107,6 +129,10 @@ class SimpleOptimizer:
         total_proj = sum(p['Projection'] for p in lineup)
         total_own = sum(p['Ownership'] for p in lineup)
         avg_own = total_own / 9
+        
+        # Validate we're using enough of the salary cap (at least $48k)
+        if total_sal < 48000:
+            return None  # Not spending enough, try again
         
         # Validate ownership is reasonable for contest
         own_target_min, own_target_max = self.contest_rules['ownership_target_avg']
