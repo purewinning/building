@@ -1,0 +1,278 @@
+"""
+Streamlit Web Interface for DFS Optimizer
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from config import CONTEST_STRUCTURES
+from main import DFSOptimizer
+
+st.set_page_config(page_title="DFS Optimizer", page_icon="🏈", layout="wide")
+
+st.title("🏈 DFS Lineup Optimizer")
+st.markdown("### Free Alternative to Stokastic - Reverse Engineered")
+
+# Sidebar configuration
+st.sidebar.header("⚙️ Configuration")
+
+contest_type = st.sidebar.selectbox(
+    "Contest Type",
+    options=list(CONTEST_STRUCTURES.keys()),
+    format_func=lambda x: CONTEST_STRUCTURES[x]['name']
+)
+
+entry_fee = st.sidebar.number_input(
+    "Entry Fee ($)",
+    min_value=1,
+    max_value=1000,
+    value=100,
+    step=1
+)
+
+num_lineups = st.sidebar.slider(
+    "Number of Lineups",
+    min_value=1,
+    max_value=50,
+    value=20,
+    step=1
+)
+
+# Display contest rules
+st.sidebar.markdown("---")
+st.sidebar.subheader("📋 Contest Rules")
+rules = CONTEST_STRUCTURES[contest_type]
+st.sidebar.markdown(f"**Entries:** {rules['entries']:,}")
+st.sidebar.markdown(f"**Target Ownership:** {rules['ownership_target_avg'][0]}-{rules['ownership_target_avg'][1]}%")
+st.sidebar.markdown(f"**Target Projection:** {rules['projection_target'][0]}-{rules['projection_target'][1]} pts")
+st.sidebar.markdown(f"**Stack Type:** {', '.join(rules['qb_stack_type'])}")
+
+if 'warning' in rules:
+    st.sidebar.warning(rules['warning'])
+
+# Main content
+tab1, tab2, tab3 = st.tabs(["📊 Generate Lineups", "📈 Analysis", "ℹ️ About"])
+
+with tab1:
+    st.header("Generate Optimized Lineups")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # File uploader
+        uploaded_file = st.file_uploader(
+            "Upload Player Pool CSV",
+            type=['csv'],
+            help="CSV should have columns: Name, Position, Salary, Team, Opponent"
+        )
+        
+        if uploaded_file is None:
+            st.info("💡 No file uploaded - using demo player pool")
+            use_demo = True
+        else:
+            use_demo = False
+    
+    with col2:
+        st.markdown("### Quick Actions")
+        generate_button = st.button("🚀 Generate Lineups", type="primary", use_container_width=True)
+    
+    if generate_button:
+        with st.spinner("Generating optimized lineups..."):
+            # Initialize optimizer
+            optimizer = DFSOptimizer(contest_type=contest_type, entry_fee=entry_fee)
+            
+            # Run optimization
+            if use_demo:
+                results, lineups = optimizer.run('demo', num_lineups=num_lineups)
+            else:
+                # Save uploaded file temporarily
+                with open('/tmp/player_pool.csv', 'wb') as f:
+                    f.write(uploaded_file.getbuffer())
+                results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups)
+            
+            # Store in session state
+            st.session_state['results'] = results
+            st.session_state['lineups'] = lineups
+        
+        st.success("✅ Lineups generated successfully!")
+    
+    # Display results if available
+    if 'results' in st.session_state:
+        st.markdown("---")
+        st.subheader("🏆 Top Lineups")
+        
+        results = st.session_state['results']
+        lineups = st.session_state['lineups']
+        
+        # Sort by ROI
+        results_sorted = results.sort_values('expected_roi', ascending=False)
+        
+        # Display top 5 lineups
+        for i, (idx, row) in enumerate(results_sorted.head(5).iterrows()):
+            lineup_id = int(row['lineup_id']) - 1
+            lineup = lineups[lineup_id]
+            
+            with st.expander(f"**Lineup #{i+1}** - ROI: {row['expected_roi']:.1f}% | Proj: {row['projection']:.1f} pts", expanded=(i==0)):
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Expected ROI", f"{row['expected_roi']:.1f}%")
+                with col2:
+                    st.metric("Win %", f"{row['win_pct']:.3f}%")
+                with col3:
+                    st.metric("Top 10%", f"{row['top10_pct']:.1f}%")
+                with col4:
+                    st.metric("Cash %", f"{row['cash_pct']:.1f}%")
+                
+                st.markdown("---")
+                
+                # Display roster
+                roster_df = pd.DataFrame([
+                    {
+                        'Position': p['Position'],
+                        'Name': p['Name'],
+                        'Team': p['Team'],
+                        'Salary': f"${p['Salary']:,}",
+                        'Projection': f"{p['Projection']:.1f}",
+                        'Ownership': f"{p['Ownership']:.1f}%"
+                    }
+                    for p in lineup['players']
+                ])
+                
+                st.dataframe(roster_df, use_container_width=True, hide_index=True)
+                
+                # Summary row
+                st.markdown(f"**Total: ${row['salary']:,} / $50,000 | {row['projection']:.1f} pts | {row['ownership']:.1f}% own**")
+        
+        # Export button
+        st.markdown("---")
+        if st.button("📥 Export All Lineups to CSV"):
+            csv = results.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"lineups_{contest_type}.csv",
+                mime="text/csv"
+            )
+
+with tab2:
+    st.header("📈 Lineup Analysis")
+    
+    if 'results' not in st.session_state:
+        st.info("Generate lineups first to see analysis")
+    else:
+        results = st.session_state['results']
+        
+        # ROI Distribution
+        fig1 = px.histogram(
+            results,
+            x='expected_roi',
+            title='Expected ROI Distribution',
+            labels={'expected_roi': 'Expected ROI (%)'},
+            nbins=20
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        # Projection vs Ownership scatter
+        fig2 = px.scatter(
+            results,
+            x='ownership',
+            y='projection',
+            size='expected_roi',
+            color='expected_roi',
+            title='Projection vs Ownership',
+            labels={
+                'ownership': 'Total Ownership (%)',
+                'projection': 'Projected Points',
+                'expected_roi': 'Expected ROI (%)'
+            },
+            hover_data=['win_pct', 'cash_pct']
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+        
+        # Summary statistics
+        st.subheader("📊 Summary Statistics")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Avg ROI", f"{results['expected_roi'].mean():.1f}%")
+            st.metric("Best ROI", f"{results['expected_roi'].max():.1f}%")
+        
+        with col2:
+            st.metric("Avg Projection", f"{results['projection'].mean():.1f} pts")
+            st.metric("Avg Ownership", f"{results['ownership'].mean():.1f}%")
+        
+        with col3:
+            st.metric("Avg Win %", f"{results['win_pct'].mean():.3f}%")
+            st.metric("Avg Cash %", f"{results['cash_pct'].mean():.1f}%")
+
+with tab3:
+    st.header("ℹ️ About This Tool")
+    
+    st.markdown("""
+    ### DFS Optimizer - Free Stokastic Alternative
+    
+    This tool reverse-engineers Stokastic's lineup optimization approach to provide
+    free DFS lineup building for NFL DraftKings contests.
+    
+    #### Features
+    
+    - ✅ **Contest-Specific Optimization** - Different strategies for different field sizes
+    - ✅ **Stack Correlation** - Enforces QB + pass catcher stacking
+    - ✅ **Ownership Targeting** - Balances projection vs leverage based on contest
+    - ✅ **Monte Carlo Simulation** - 10,000 tournament simulations per lineup
+    - ✅ **Expected ROI Calculation** - See which lineups have positive expected value
+    
+    #### Contest Structures Supported
+    
+    **Small GPP (4,444 entries, 25% to 1st)**
+    - Target: 110-150% total ownership
+    - Strategy: Balance projection + ownership
+    - Stack: QB + 2 or QB + 3
+    
+    **Mid GPP (14,000 entries, 10% payout)**  
+    - Target: 40-90% total ownership
+    - Strategy: More contrarian
+    - ⚠️ Warning: Structure often has negative ROI
+    
+    **Millionaire Maker (150k+ entries)**
+    - Target: 30-70% total ownership  
+    - Strategy: Extreme differentiation
+    - Stack: Ultra-contrarian QB + 2/3
+    
+    #### How It Works
+    
+    1. **Projections** - Uses salary-based baseline (can integrate free sources)
+    2. **Ownership** - Models field behavior based on value and position
+    3. **Optimization** - Generates lineups meeting contest-specific constraints
+    4. **Simulation** - Runs 10,000 Monte Carlo iterations per lineup
+    5. **Results** - Returns top lineups ranked by expected ROI
+    
+    #### Data Sources (Can Be Integrated)
+    
+    - FantasyPros (free consensus projections)
+    - RotoGrinders (free ownership estimates)
+    - ESPN/OddsShark (Vegas lines)
+    - DFSBoss (ownership projections)
+    
+    #### Limitations
+    
+    - Projections less refined than paid services
+    - Ownership estimates are modeled, not live
+    - Doesn't account for late news/injuries automatically
+    
+    #### Built By
+    
+    Reverse engineered from Stokastic simulation data.
+    Open source - customize as needed!
+    
+    ---
+    
+    **Disclaimer:** This is a tool to assist with research. Always do your own
+    analysis before entering real-money contests.
+    """)
+
+# Footer
+st.markdown("---")
+st.markdown("Built with ❤️ using Streamlit | Free Stokastic Alternative")

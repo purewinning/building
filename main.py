@@ -1,0 +1,335 @@
+"""
+DFS Optimizer - Main Application
+Free alternative to Stokastic's lineup builder
+"""
+
+import pandas as pd
+import argparse
+from typing import List, Dict
+from config import CONTEST_STRUCTURES, TOP_LINEUPS_TO_RETURN
+from projections import ProjectionEngine, OwnershipProjector
+from optimizer import LineupOptimizer
+from simulator import MonteCarloSimulator, create_payout_structure
+
+
+class DFSOptimizer:
+    """Main application class"""
+    
+    def __init__(self, contest_type: str = 'small_gpp', entry_fee: float = 100):
+        self.contest_type = contest_type
+        self.entry_fee = entry_fee
+        self.contest_rules = CONTEST_STRUCTURES[contest_type]
+        
+        # Initialize components
+        self.projection_engine = ProjectionEngine()
+        self.ownership_projector = OwnershipProjector()
+        self.optimizer = LineupOptimizer(contest_type)
+        
+    def run(self, player_pool_path: str, num_lineups: int = 20) -> pd.DataFrame:
+        """
+        Main workflow: Load data -> Generate projections -> Build lineups -> Simulate
+        
+        Args:
+            player_pool_path: Path to CSV with DK player pool
+            num_lineups: Number of lineups to generate
+            
+        Returns:
+            DataFrame with top lineups and their expected ROI
+        """
+        
+        print("=" * 80)
+        print(f"🏈 DFS OPTIMIZER - {self.contest_rules['name']}")
+        print("=" * 80)
+        print()
+        
+        # Step 1: Load player pool
+        print("📂 Loading player pool...")
+        player_pool = self._load_player_pool(player_pool_path)
+        print(f"   Loaded {len(player_pool)} players")
+        print()
+        
+        # Step 2: Generate projections
+        print("📊 Generating projections...")
+        player_pool = self.projection_engine.generate_projections(player_pool)
+        print(f"   ✓ Projections generated")
+        print()
+        
+        # Step 3: Project ownership
+        print("👥 Projecting ownership...")
+        player_pool = self.ownership_projector.project_ownership(player_pool)
+        print(f"   ✓ Ownership projected")
+        print()
+        
+        # Step 4: Build lineups
+        print(f"🔨 Building {num_lineups} optimized lineups...")
+        lineups = self.optimizer.generate_lineups(
+            player_pool, 
+            num_lineups=num_lineups,
+            contest_type=self.contest_type
+        )
+        print(f"   ✓ Generated {len(lineups)} unique lineups")
+        print()
+        
+        # Step 5: Simulate tournaments
+        print("🎲 Running Monte Carlo simulations (10,000 iterations)...")
+        payout_structure = create_payout_structure(self.contest_type, self.entry_fee)
+        simulator = MonteCarloSimulator(
+            self.contest_rules['entries'],
+            payout_structure
+        )
+        
+        results = simulator.batch_simulate(lineups, player_pool)
+        print("   ✓ Simulations complete")
+        print()
+        
+        # Step 6: Display results
+        self._display_results(results, lineups)
+        
+        return results, lineups
+    
+    def _load_player_pool(self, path: str) -> pd.DataFrame:
+        """
+        Load player pool from CSV
+        Expected columns: Name, Position, Salary, Team, Opponent
+        """
+        try:
+            df = pd.read_csv(path)
+            
+            # Validate required columns
+            required = ['Name', 'Position', 'Salary', 'Team']
+            missing = [col for col in required if col not in df.columns]
+            
+            if missing:
+                print(f"⚠️  Warning: Missing columns: {missing}")
+                print("   Creating placeholder data for demo...")
+                df = self._create_demo_player_pool()
+            
+            return df
+            
+        except FileNotFoundError:
+            print(f"⚠️  File not found: {path}")
+            print("   Creating demo player pool...")
+            return self._create_demo_player_pool()
+    
+    def _create_demo_player_pool(self) -> pd.DataFrame:
+        """Create demo player pool for testing"""
+        
+        players = []
+        
+        # QBs
+        qbs = [
+            ('Josh Allen', 'BUF', 7500),
+            ('Lamar Jackson', 'BAL', 6400),
+            ('Jalen Hurts', 'PHI', 6800),
+            ('Patrick Mahomes', 'KC', 6500),
+            ('Matthew Stafford', 'LAR', 7000),
+            ('Sam Darnold', 'SEA', 5800),
+            ('Jared Goff', 'DET', 6200)
+        ]
+        
+        for name, team, salary in qbs:
+            players.append({
+                'Name': name,
+                'Position': 'QB',
+                'Team': team,
+                'Salary': salary,
+                'Opponent': 'OPP'
+            })
+        
+        # RBs
+        rbs = [
+            ('Christian McCaffrey', 'SF', 9500),
+            ('Saquon Barkley', 'PHI', 8800),
+            ('Jahmyr Gibbs', 'DET', 8800),
+            ('James Cook', 'BUF', 8000),
+            ('Travis Etienne Jr.', 'JAX', 6500),
+            ('Devin Neal', 'NO', 5300),
+            ('Woody Marks', 'HOU', 5600),
+            ('Chuba Hubbard', 'CAR', 4600)
+        ]
+        
+        for name, team, salary in rbs:
+            players.append({
+                'Name': name,
+                'Position': 'RB',
+                'Team': team,
+                'Salary': salary,
+                'Opponent': 'OPP'
+            })
+        
+        # WRs
+        wrs = [
+            ('Puka Nacua', 'LAR', 8700),
+            ('Ja\'Marr Chase', 'CIN', 8100),
+            ('Jaxon Smith-Njigba', 'SEA', 8600),
+            ('A.J. Brown', 'PHI', 6800),
+            ('Davante Adams', 'LAR', 7200),
+            ('DeVonta Smith', 'PHI', 5800),
+            ('Chris Olave', 'NO', 6200),
+            ('Courtland Sutton', 'DEN', 5500),
+            ('Khalil Shakir', 'BUF', 5300),
+            ('Zay Flowers', 'BAL', 6300)
+        ]
+        
+        for name, team, salary in wrs:
+            players.append({
+                'Name': name,
+                'Position': 'WR',
+                'Team': team,
+                'Salary': salary,
+                'Opponent': 'OPP'
+            })
+        
+        # TEs
+        tes = [
+            ('Mark Andrews', 'BAL', 3900),
+            ('Mike Gesicki', 'CIN', 3300),
+            ('Trey McBride', 'ARI', 6600),
+            ('George Kittle', 'SF', 5800),
+            ('Hunter Henry', 'NE', 4400)
+        ]
+        
+        for name, team, salary in tes:
+            players.append({
+                'Name': name,
+                'Position': 'TE',
+                'Team': team,
+                'Salary': salary,
+                'Opponent': 'OPP'
+            })
+        
+        # DSTs
+        dsts = [
+            ('Titans', 'TEN', 2300),
+            ('Saints', 'NO', 2500),
+            ('Bears', 'CHI', 2500),
+            ('Ravens', 'BAL', 3200)
+        ]
+        
+        for name, team, salary in dsts:
+            players.append({
+                'Name': name,
+                'Position': 'DST',
+                'Team': team,
+                'Salary': salary,
+                'Opponent': 'OPP'
+            })
+        
+        return pd.DataFrame(players)
+    
+    def _display_results(self, results: pd.DataFrame, lineups: List[Dict]):
+        """Display formatted results"""
+        
+        print("=" * 80)
+        print(f"🏆 TOP {min(5, len(results))} LINEUPS")
+        print("=" * 80)
+        print()
+        
+        # Sort by expected ROI
+        results = results.sort_values('expected_roi', ascending=False)
+        
+        for i, (idx, row) in enumerate(results.head(5).iterrows()):
+            lineup = lineups[int(row['lineup_id']) - 1]
+            
+            print(f"LINEUP #{i+1}")
+            print("-" * 80)
+            print(f"Expected ROI: {row['expected_roi']:.1f}%")
+            print(f"Win Probability: {row['win_pct']:.3f}%")
+            print(f"Top 10% Rate: {row['top10_pct']:.1f}%")
+            print(f"Cash Rate: {row['cash_pct']:.1f}%")
+            print()
+            print(f"Salary: ${row['salary']:,} / $50,000")
+            print(f"Projection: {row['projection']:.1f} pts")
+            print(f"Ownership: {row['ownership']:.1f}%")
+            print()
+            
+            # Display roster
+            for player in lineup['players']:
+                print(f"  {player['Position']:3} | {player['Name']:25} | "
+                      f"${player['Salary']:>5,} | {player['Projection']:>5.1f} pts | "
+                      f"{player['Ownership']:>4.1f}%")
+            
+            print()
+        
+        print("=" * 80)
+        print()
+        
+        # Export option
+        export = input("Export all lineups to CSV? (y/n): ").strip().lower()
+        if export == 'y':
+            self._export_lineups(results, lineups)
+    
+    def _export_lineups(self, results: pd.DataFrame, lineups: List[Dict]):
+        """Export lineups to CSV for DraftKings upload"""
+        
+        export_data = []
+        
+        for i, lineup in enumerate(lineups[:TOP_LINEUPS_TO_RETURN]):
+            row = {}
+            
+            # DraftKings CSV format expects positions as columns
+            for player in lineup['players']:
+                pos = player['Position']
+                
+                # Handle multiple RBs/WRs
+                if pos in row:
+                    # Find next available slot
+                    if pos == 'RB':
+                        if 'RB' in row:
+                            pos = 'RB2'
+                        if 'RB2' in row:
+                            pos = 'FLEX'
+                    elif pos == 'WR':
+                        if 'WR' in row:
+                            pos = 'WR2'
+                        elif 'WR2' in row:
+                            pos = 'WR3'
+                        elif 'WR3' in row:
+                            pos = 'FLEX'
+                    elif pos == 'TE':
+                        if 'TE' in row:
+                            pos = 'FLEX'
+                
+                row[pos] = player['Name']
+            
+            export_data.append(row)
+        
+        df = pd.DataFrame(export_data)
+        filename = f"lineups_{self.contest_type}.csv"
+        df.to_csv(filename, index=False)
+        
+        print(f"✅ Exported to {filename}")
+        print()
+
+
+def main():
+    """Command-line interface"""
+    
+    parser = argparse.ArgumentParser(description='DFS Lineup Optimizer')
+    parser.add_argument('--contest', type=str, default='small_gpp',
+                       choices=['small_gpp', 'mid_gpp', 'milly_maker'],
+                       help='Contest type to optimize for')
+    parser.add_argument('--entry', type=float, default=100,
+                       help='Entry fee in dollars')
+    parser.add_argument('--players', type=str, default='player_pool.csv',
+                       help='Path to player pool CSV')
+    parser.add_argument('--num-lineups', type=int, default=20,
+                       help='Number of lineups to generate')
+    
+    args = parser.parse_args()
+    
+    # Initialize optimizer
+    optimizer = DFSOptimizer(
+        contest_type=args.contest,
+        entry_fee=args.entry
+    )
+    
+    # Run optimization
+    results, lineups = optimizer.run(
+        player_pool_path=args.players,
+        num_lineups=args.num_lineups
+    )
+
+
+if __name__ == '__main__':
+    main()
