@@ -52,16 +52,16 @@ class SimpleOptimizer:
         lineup = []
         budget = SALARY_CAP
         
-        # Step 1: QB (15-18% of budget)
-        qb_budget = int(budget * np.random.uniform(0.15, 0.18))
+        # Step 1: QB (10-15% of budget) - Allow cheaper QBs to spend on studs elsewhere
+        qb_budget = int(budget * np.random.uniform(0.10, 0.15))
         qb = self._pick_player('QB', qb_budget, [])
         if not qb:
             return None
         lineup.append(qb)
         budget -= qb['Salary']
         
-        # Step 2: Two RBs (25-30% of remaining)
-        rb_budget = int(budget * 0.28)
+        # Step 2: Two RBs (30-38% of remaining) - Allow room for studs
+        rb_budget = int(budget * np.random.uniform(0.30, 0.38))
         for i in range(2):
             rb = self._pick_player('RB', rb_budget, [p['Name'] for p in lineup])
             if not rb:
@@ -69,8 +69,8 @@ class SimpleOptimizer:
             lineup.append(rb)
             budget -= rb['Salary']
         
-        # Step 3: Three WRs (30-35% of remaining)
-        wr_budget = int(budget * 0.32)
+        # Step 3: Three WRs (35-45% of remaining) - WRs are expensive, need room
+        wr_budget = int(budget * np.random.uniform(0.35, 0.45))
         for i in range(3):
             wr = self._pick_player('WR', wr_budget, [p['Name'] for p in lineup])
             if not wr:
@@ -78,7 +78,7 @@ class SimpleOptimizer:
             lineup.append(wr)
             budget -= wr['Salary']
         
-        # Step 4: TE (use remaining, save some for DST)
+        # Step 4: TE (use remaining, save for DST) - Can be cheap
         te_budget = budget - 2500  # Save for DST
         te = self._pick_player('TE', te_budget, [p['Name'] for p in lineup])
         if not te:
@@ -118,34 +118,53 @@ class SimpleOptimizer:
         }
     
     def _pick_player(self, position, max_salary: int, used_names: List[str]) -> Dict:
-        """Pick a player by value within budget"""
+        """Pick a player balancing projection, value, and ownership"""
         
         # Handle multiple positions
         if isinstance(position, list):
             pool = self.player_pool[
                 (self.player_pool['Position'].isin(position)) &
                 (~self.player_pool['Name'].isin(used_names)) &
-                (self.player_pool['Salary'] <= max_salary)
+                (self.player_pool['Salary'] <= max_salary) &
+                (self.player_pool['Projection'] > 0)  # Must have projection
             ].copy()
         else:
             pool = self.player_pool[
                 (self.player_pool['Position'] == position) &
                 (~self.player_pool['Name'].isin(used_names)) &
-                (self.player_pool['Salary'] <= max_salary)
+                (self.player_pool['Salary'] <= max_salary) &
+                (self.player_pool['Projection'] > 0)  # Must have projection
             ].copy()
         
         if pool.empty:
             return None
         
-        # Weight heavily by value, add randomness
-        pool['pick_weight'] = pool['Value'] * np.random.uniform(0.7, 1.3, len(pool))
+        # For small_gpp: 70% projection weight, 30% ownership leverage
+        proj_weight = self.contest_rules['projection_weight']  # 0.70
+        own_weight = self.contest_rules['ownership_weight']    # 0.30
         
-        # Pick from top 30% by weight
-        top_n = max(1, int(len(pool) * 0.3))
-        top_pool = pool.nlargest(top_n, 'pick_weight')
+        # Normalize projection (0-1)
+        pool['proj_norm'] = pool['Projection'] / pool['Projection'].max()
         
-        # Random from top pool
-        return top_pool.sample(1).iloc[0].to_dict()
+        # Ownership leverage (inverse) - but don't penalize popular players too much
+        # Lower ownership = higher score, but capped
+        pool['own_leverage'] = (100 - pool['Ownership']) / 100
+        pool['own_leverage'] = pool['own_leverage'].clip(0.3, 1.0)  # Don't go below 0.3 even for 100% owned
+        
+        # Combined score
+        pool['pick_score'] = (pool['proj_norm'] * proj_weight) + (pool['own_leverage'] * own_weight)
+        
+        # Add randomness for diversity (±20%)
+        pool['pick_score'] *= np.random.uniform(0.8, 1.2, len(pool))
+        
+        # Pick from top 40% by score (was 30%, now allowing more high-projection players)
+        top_n = max(1, int(len(pool) * 0.4))
+        top_pool = pool.nlargest(top_n, 'pick_score')
+        
+        # Weight by score for final selection
+        weights = top_pool['pick_score'] / top_pool['pick_score'].sum()
+        
+        return top_pool.sample(1, weights=weights).iloc[0].to_dict()
     
     def _is_duplicate(self, lineup: Dict, lineups: List[Dict]) -> bool:
         """Check if too similar to existing"""
