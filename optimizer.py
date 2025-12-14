@@ -22,322 +22,213 @@ class LineupOptimizer:
                         num_lineups: int = 20,
                         contest_type: str = None) -> List[Dict]:
         """
-        Generate optimal lineups for contest
-        
-        Args:
-            player_pool: DataFrame with [Name, Position, Salary, Projection, Ownership, Team]
-            num_lineups: Number of unique lineups to generate
-            contest_type: Override contest type from initialization
-            
-        Returns:
-            List of lineup dicts
+        Generate optimal lineups for contest using table-based approach
         """
         if contest_type:
             self.contest_rules = CONTEST_STRUCTURES[contest_type]
             
         self.player_pool = player_pool.copy()
         
+        # Ensure we have clean data
+        self.player_pool = self.player_pool.dropna(subset=['Name', 'Position', 'Salary', 'Projection', 'Ownership'])
+        
+        # Add value column for smart selection
+        self.player_pool['Value'] = self.player_pool['Projection'] / (self.player_pool['Salary'] / 1000)
+        
         print(f"   Player pool: {len(self.player_pool)} players")
-        print(f"   Positions: {self.player_pool['Position'].value_counts().to_dict()}")
+        position_counts = self.player_pool['Position'].value_counts().to_dict()
+        print(f"   Positions: {position_counts}")
+        
+        # Validate we have enough players
+        min_required = {'QB': 1, 'RB': 3, 'WR': 4, 'TE': 2, 'DST': 1}
+        for pos, min_count in min_required.items():
+            actual = position_counts.get(pos, 0)
+            if actual < min_count:
+                print(f"   ❌ Not enough {pos} players (need {min_count}, have {actual})")
+                return []
         
         # Generate lineup candidates
         candidates = []
         attempts = 0
-        max_attempts = num_lineups * 50  # Reduced from 100 to 50
+        max_attempts = num_lineups * 20  # Much more aggressive attempts
+        
+        print(f"   Generating lineups (up to {max_attempts} attempts)...")
         
         while len(candidates) < num_lineups and attempts < max_attempts:
             try:
-                lineup = self._build_single_lineup()
+                lineup = self._build_lineup_from_table()
                 
                 if lineup and self._is_valid_lineup(lineup):
-                    # Check if unique
                     if not self._is_duplicate(lineup, candidates):
                         candidates.append(lineup)
-                        print(f"   Generated {len(candidates)}/{num_lineups} lineups", end='\r')
+                        if len(candidates) % 5 == 0:  # Progress every 5 lineups
+                            print(f"   Generated {len(candidates)}/{num_lineups} lineups", end='\r')
             except Exception as e:
-                pass  # Silently continue on individual lineup failures
+                # Debug: show first error
+                if attempts == 0:
+                    print(f"   First error: {e}")
             
             attempts += 1
         
         print()  # New line
         
         if len(candidates) == 0:
-            print(f"   ⚠️ Failed to generate any valid lineups after {attempts} attempts")
-            print(f"   Check that player pool has enough players in each position")
+            print(f"   ❌ Failed to generate any valid lineups after {attempts} attempts")
             return []
         
         if len(candidates) < num_lineups:
-            print(f"   ⚠️ Only generated {len(candidates)}/{num_lineups} lineups")
+            print(f"   ⚠️  Only generated {len(candidates)}/{num_lineups} lineups")
         
         # Score and rank lineups
         scored_lineups = self._score_lineups(candidates)
         
         return scored_lineups[:num_lineups]
     
-    def _build_single_lineup(self) -> Dict:
-        """Build a single lineup with stacking constraints"""
+    def _build_lineup_from_table(self) -> Dict:
+        """Build a single lineup using pure DataFrame operations (FAST)"""
         
-        # Step 1: Select QB (most important decision)
-        qb = self._select_qb()
-        if qb is None:
+        # Start with empty lineup
+        lineup_players = []
+        remaining_salary = SALARY_CAP
+        
+        # Step 1: Select QB (crucial decision)
+        qb_pool = self.player_pool[
+            (self.player_pool['Position'] == 'QB') &
+            (self.player_pool['Salary'] <= remaining_salary * 0.20)  # Max 20% of cap
+        ].copy()
+        
+        if qb_pool.empty:
             return None
         
-        # Step 2: Build stack around QB
-        stack_players = self._build_stack(qb)
-        if not stack_players:
-            return None
+        # Weight by value with some randomness
+        qb_pool['weight'] = qb_pool['Value'] * np.random.uniform(0.8, 1.2, len(qb_pool))
+        qb = qb_pool.nlargest(1, 'weight').iloc[0]
+        lineup_players.append(qb.to_dict())
+        remaining_salary -= qb['Salary']
         
-        # Step 3: Fill remaining positions
-        lineup = self._fill_remaining_positions(qb, stack_players)
-        
-        return lineup
-    
-    def _select_qb(self) -> pd.Series:
-        """
-        Select QB based on contest rules and value
-        """
-        qbs = self.player_pool[self.player_pool['Position'] == 'QB'].copy()
-        
-        if qbs.empty:
-            return None
-        
-        # Filter by ownership constraints
-        max_own = self.contest_rules['qb_ownership_max']
-        pref_min, pref_max = self.contest_rules['qb_ownership_preferred']
-        
-        # Prefer QBs in preferred range
-        preferred_qbs = qbs[
-            (qbs['Ownership'] >= pref_min) & 
-            (qbs['Ownership'] <= pref_max)
-        ]
-        
-        if not preferred_qbs.empty:
-            # Weight by value (projection per $1k), not just projection
-            preferred_qbs['TempValue'] = preferred_qbs['Projection'] / (preferred_qbs['Salary'] / 1000)
-            weights = preferred_qbs['TempValue'] / preferred_qbs['TempValue'].sum()
-            qb = preferred_qbs.sample(n=1, weights=weights).iloc[0]
-        else:
-            # Fall back to any QB under max ownership
-            valid_qbs = qbs[qbs['Ownership'] <= max_own]
-            if valid_qbs.empty:
-                return None
-            valid_qbs['TempValue'] = valid_qbs['Projection'] / (valid_qbs['Salary'] / 1000)
-            weights = valid_qbs['TempValue'] / valid_qbs['TempValue'].sum()
-            qb = valid_qbs.sample(n=1, weights=weights).iloc[0]
-        
-        return qb
-    
-    def _build_stack(self, qb: pd.Series) -> List[pd.Series]:
-        """
-        Build correlated stack with QB
-        Returns list of pass catchers from same team
-        """
+        # Get QB's team for stacking
         qb_team = qb['Team']
         
-        # Get all pass catchers from same team
-        teammates = self.player_pool[
+        # Step 2: Stack with 2 pass catchers from QB's team
+        stack_pool = self.player_pool[
             (self.player_pool['Team'] == qb_team) &
-            (self.player_pool['Position'].isin(['WR', 'TE', 'RB']))
+            (self.player_pool['Position'].isin(['WR', 'TE'])) &
+            (self.player_pool['Salary'] <= remaining_salary * 0.4)  # Leave room for rest
         ].copy()
         
-        # Determine stack size based on contest rules
-        stack_types = self.contest_rules['qb_stack_type']
+        stack_count = min(2, len(stack_pool))
+        if stack_count > 0:
+            stack_pool['weight'] = stack_pool['Value'] * np.random.uniform(0.8, 1.2, len(stack_pool))
+            stack_players = stack_pool.nlargest(stack_count, 'weight')
+            
+            for _, player in stack_players.iterrows():
+                lineup_players.append(player.to_dict())
+                remaining_salary -= player['Salary']
         
-        # Prefer QB + 2 if allowed
-        if 'QB + 2' in stack_types:
-            target_stack_size = 2
-        elif 'QB + 3' in stack_types:
-            target_stack_size = 3
+        # Step 3: Fill RBs (need at least 2)
+        used_names = [p['Name'] for p in lineup_players]
+        rb_pool = self.player_pool[
+            (self.player_pool['Position'] == 'RB') &
+            (~self.player_pool['Name'].isin(used_names)) &
+            (self.player_pool['Salary'] <= remaining_salary * 0.35)
+        ].copy()
+        
+        rb_needed = 2
+        if len(rb_pool) >= rb_needed:
+            rb_pool['weight'] = rb_pool['Value'] * np.random.uniform(0.8, 1.2, len(rb_pool))
+            rbs = rb_pool.nlargest(rb_needed, 'weight')
+            
+            for _, player in rbs.iterrows():
+                lineup_players.append(player.to_dict())
+                remaining_salary -= player['Salary']
         else:
-            target_stack_size = 1
+            return None
         
-        # Prioritize WRs and TEs over RBs for correlation
-        pass_catchers = teammates[teammates['Position'].isin(['WR', 'TE'])]
+        # Step 4: Fill remaining WRs (need total of 3)
+        used_names = [p['Name'] for p in lineup_players]
+        current_wrs = sum(1 for p in lineup_players if p['Position'] == 'WR')
+        wr_needed = 3 - current_wrs
         
-        if len(pass_catchers) < target_stack_size:
-            return []
-        
-        # Select top projected pass catchers with some randomness
-        pass_catchers = pass_catchers.sort_values('Projection', ascending=False)
-        
-        # Take top options but add some variation
-        stack_size = np.random.choice([target_stack_size, target_stack_size - 1, target_stack_size + 1])
-        stack_size = max(1, min(stack_size, len(pass_catchers), 3))
-        
-        # Weight by projection
-        weights = pass_catchers['Projection'] / pass_catchers['Projection'].sum()
-        selected = pass_catchers.sample(n=stack_size, weights=weights, replace=False)
-        
-        return selected.to_dict('records')
-    
-    def _fill_remaining_positions(self, qb: pd.Series, stack: List[Dict]) -> Dict:
-        """Fill remaining roster spots"""
-        
-        lineup = {
-            'QB': qb,
-            'stack': stack,
-            'remaining': []
-        }
-        
-        used_salary = qb['Salary'] + sum(p['Salary'] for p in stack)
-        remaining_salary = SALARY_CAP - used_salary
-        
-        # Count positions filled
-        positions_filled = {'QB': 1, 'RB': 0, 'WR': 0, 'TE': 0, 'DST': 0}
-        for player in stack:
-            positions_filled[player['Position']] += 1
-        
-        # Determine what positions we still need
-        needs = []
-        for pos, required in DRAFTKINGS_POSITIONS.items():
-            if pos == 'FLEX':
-                continue  # Handle FLEX last
-            filled = positions_filled.get(pos, 0)
-            if filled < required:
-                needs.extend([pos] * (required - filled))
-        
-        # Fill required positions
-        for pos in needs:
-            player = self._select_player_for_position(
-                pos, 
-                used_players=[qb['Name']] + [p['Name'] for p in stack],
-                budget=remaining_salary
-            )
+        if wr_needed > 0:
+            wr_pool = self.player_pool[
+                (self.player_pool['Position'] == 'WR') &
+                (~self.player_pool['Name'].isin(used_names)) &
+                (self.player_pool['Salary'] <= remaining_salary * 0.35)
+            ].copy()
             
-            if player is None:
-                return None  # Can't build valid lineup
-            
-            lineup['remaining'].append(player)
-            remaining_salary -= player['Salary']
-        
-        # Fill FLEX (RB/WR/TE)
-        flex = self._select_flex(
-            used_players=[qb['Name']] + [p['Name'] for p in stack] + [p['Name'] for p in lineup['remaining']],
-            budget=remaining_salary
-        )
-        
-        if flex is None:
-            return None
-        
-        lineup['remaining'].append(flex)
-        remaining_salary -= flex['Salary']
-        
-        # Select DST
-        dst = self._select_dst(
-            used_players=[qb['Name']] + [p['Name'] for p in stack] + [p['Name'] for p in lineup['remaining']],
-            budget=remaining_salary
-        )
-        
-        if dst is None:
-            return None
-        
-        lineup['remaining'].append(dst)
-        
-        return self._format_lineup(lineup)
-    
-    def _select_player_for_position(self, position: str, used_players: List[str], budget: int) -> Dict:
-        """Select best available player for position within budget"""
-        
-        available = self.player_pool[
-            (self.player_pool['Position'] == position) &
-            (~self.player_pool['Name'].isin(used_players)) &
-            (self.player_pool['Salary'] <= budget)
-        ].copy()
-        
-        if available.empty:
-            return None
-        
-        # For expensive positions early in fill, prefer cheaper options to save cap space
-        # Weight by value (pts/$) rather than raw projection
-        available['TempValue'] = available['Projection'] / (available['Salary'] / 1000)
-        
-        # Add some randomness - weight by value but allow variation
-        weights = available['TempValue'] ** 2  # Square to emphasize value
-        weights = weights / weights.sum()
-        
-        selected = available.sample(n=1, weights=weights).iloc[0]
-        
-        return selected.to_dict()
-    
-    def _select_flex(self, used_players: List[str], budget: int) -> Dict:
-        """Select FLEX (RB/WR/TE) - prefer value plays to use remaining budget"""
-        available = self.player_pool[
-            (self.player_pool['Position'].isin(['RB', 'WR', 'TE'])) &
-            (~self.player_pool['Name'].isin(used_players)) &
-            (self.player_pool['Salary'] <= budget)
-        ].copy()
-        
-        if available.empty:
-            return None
-        
-        # Weight by value
-        available['TempValue'] = available['Projection'] / (available['Salary'] / 1000)
-        weights = available['TempValue'] ** 2
-        weights = weights / weights.sum()
-        
-        selected = available.sample(n=1, weights=weights).iloc[0]
-        
-        return selected.to_dict()
-    
-    def _select_dst(self, used_players: List[str], budget: int) -> Dict:
-        """Select defense - usually min price"""
-        available = self.player_pool[
-            (self.player_pool['Position'] == 'DST') &
-            (~self.player_pool['Name'].isin(used_players)) &
-            (self.player_pool['Salary'] <= budget)
-        ].copy()
-        
-        if available.empty:
-            return None
-        
-        # Prefer cheap DSTs (common strategy) but with some variance
-        available['TempValue'] = available['Projection'] / (available['Salary'] / 1000)
-        weights = available['TempValue']
-        weights = weights / weights.sum()
-        
-        selected = available.sample(n=1, weights=weights).iloc[0]
-        
-        return selected.to_dict()
-    
-    def _calculate_selection_weights(self, players: pd.DataFrame) -> pd.Series:
-        """Calculate selection probability weights based on contest type"""
-        
-        proj_weight = self.contest_rules['projection_weight']
-        own_weight = self.contest_rules['ownership_weight']
-        
-        # Normalize projections and inverse ownership
-        proj_norm = players['Projection'] / players['Projection'].max()
-        own_norm = (100 - players['Ownership']) / 100  # Invert so low ownership = high weight
-        
-        # Combine weighted
-        weights = (proj_norm * proj_weight) + (own_norm * own_weight)
-        
-        return weights / weights.sum()
-    
-    def _format_lineup(self, lineup_dict: Dict) -> Dict:
-        """Format lineup into standard structure"""
-        
-        all_players = [lineup_dict['QB']] + lineup_dict['stack'] + lineup_dict['remaining']
-        
-        # Convert Series/dict to consistent format
-        players = []
-        for p in all_players:
-            if isinstance(p, pd.Series):
-                players.append(p.to_dict())
+            if len(wr_pool) >= wr_needed:
+                wr_pool['weight'] = wr_pool['Value'] * np.random.uniform(0.8, 1.2, len(wr_pool))
+                wrs = wr_pool.nlargest(wr_needed, 'weight')
+                
+                for _, player in wrs.iterrows():
+                    lineup_players.append(player.to_dict())
+                    remaining_salary -= player['Salary']
             else:
-                players.append(p)
+                return None
         
-        total_salary = sum(p['Salary'] for p in players)
-        total_proj = sum(p['Projection'] for p in players)
-        total_own = sum(p['Ownership'] for p in players)
+        # Step 5: Fill TE if not already have one
+        current_tes = sum(1 for p in lineup_players if p['Position'] == 'TE')
+        if current_tes == 0:
+            used_names = [p['Name'] for p in lineup_players]
+            te_pool = self.player_pool[
+                (self.player_pool['Position'] == 'TE') &
+                (~self.player_pool['Name'].isin(used_names)) &
+                (self.player_pool['Salary'] <= remaining_salary * 0.35)
+            ].copy()
+            
+            if not te_pool.empty:
+                te_pool['weight'] = te_pool['Value'] * np.random.uniform(0.8, 1.2, len(te_pool))
+                te = te_pool.nlargest(1, 'weight').iloc[0]
+                lineup_players.append(te.to_dict())
+                remaining_salary -= te['Salary']
+            else:
+                return None
+        
+        # Step 6: Fill FLEX (RB/WR/TE)
+        used_names = [p['Name'] for p in lineup_players]
+        flex_pool = self.player_pool[
+            (self.player_pool['Position'].isin(['RB', 'WR', 'TE'])) &
+            (~self.player_pool['Name'].isin(used_names)) &
+            (self.player_pool['Salary'] <= remaining_salary * 0.5)
+        ].copy()
+        
+        if not flex_pool.empty:
+            flex_pool['weight'] = flex_pool['Value'] * np.random.uniform(0.8, 1.2, len(flex_pool))
+            flex = flex_pool.nlargest(1, 'weight').iloc[0]
+            lineup_players.append(flex.to_dict())
+            remaining_salary -= flex['Salary']
+        else:
+            return None
+        
+        # Step 7: Fill DST (usually cheap)
+        used_names = [p['Name'] for p in lineup_players]
+        dst_pool = self.player_pool[
+            (self.player_pool['Position'] == 'DST') &
+            (~self.player_pool['Name'].isin(used_names)) &
+            (self.player_pool['Salary'] <= remaining_salary)
+        ].copy()
+        
+        if not dst_pool.empty:
+            dst_pool['weight'] = dst_pool['Value'] * np.random.uniform(0.8, 1.2, len(dst_pool))
+            dst = dst_pool.nlargest(1, 'weight').iloc[0]
+            lineup_players.append(dst.to_dict())
+            remaining_salary -= dst['Salary']
+        else:
+            return None
+        
+        # Build final lineup dict
+        total_salary = sum(p['Salary'] for p in lineup_players)
+        total_proj = sum(p['Projection'] for p in lineup_players)
+        total_own = sum(p['Ownership'] for p in lineup_players)
         
         return {
-            'players': players,
+            'players': lineup_players,
             'salary': total_salary,
             'projection': total_proj,
             'ownership': total_own,
-            'stack_size': len(lineup_dict['stack']) + 1  # +1 for QB
+            'stack_size': 3  # QB + 2
         }
+    
     
     def _is_valid_lineup(self, lineup: Dict) -> bool:
         """Check if lineup meets all constraints"""
