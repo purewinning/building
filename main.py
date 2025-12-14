@@ -322,8 +322,16 @@ class DFSOptimizer:
             # Stack info
             stack_info = lineup.get('stack', 'Unknown')
             print(f"Stack: {stack_info}")
+            
+            # Show all correlations
+            correlations = lineup.get('correlations', [])
+            if correlations:
+                print(f"Correlations:")
+                for corr in correlations:
+                    print(f"  • {corr}")
+            
             game_stacks = lineup.get('game_stacks', [])
-            if game_stacks and game_stacks != ["No game stacks"]:
+            if game_stacks and game_stacks != ["Single game focus"]:
                 print(f"Game Stacks: {', '.join(game_stacks)}")
             print()
             
