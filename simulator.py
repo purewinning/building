@@ -29,7 +29,7 @@ class MonteCarloSimulator:
         
     def simulate_lineup(self, lineup: Dict, field_ownership: pd.DataFrame) -> Dict:
         """
-        Simulate tournament performance for a lineup
+        Simulate tournament performance for a lineup (VECTORIZED for speed)
         
         Args:
             lineup: Dict with players, projections, ownership
@@ -39,51 +39,46 @@ class MonteCarloSimulator:
             Dict with win%, top10%, cash%, expected ROI
         """
         
-        results = {
-            'win_count': 0,
-            'top10_count': 0,
-            'cash_count': 0,
-            'total_winnings': 0,
-            'placements': []
-        }
-        
         try:
-            # Run simulations
-            for i in range(self.iterations):
-                # Simulate this lineup's score
-                lineup_score = self._simulate_score(lineup)
-                
-                # Simulate field scores
-                field_scores = self._simulate_field(field_ownership)
-                
-                # Determine placement
-                placement = self._calculate_placement(lineup_score, field_scores)
-                
-                # Track results
-                results['placements'].append(placement)
-                
-                if placement == 1:
-                    results['win_count'] += 1
-                
-                top_10pct = int(self.contest_entries * 0.10)
-                if placement <= top_10pct:
-                    results['top10_count'] += 1
-                
-                # Check if cashed
-                payout = self._get_payout(placement)
-                if payout > 0:
-                    results['cash_count'] += 1
-                    results['total_winnings'] += payout
+            # Vectorized simulation - all iterations at once
+            # Generate all lineup scores at once
+            lineup_scores = self._simulate_score_vectorized(lineup, self.iterations)
+            
+            # Generate all field scores at once
+            field_scores = self._simulate_field_vectorized(self.iterations)
+            
+            # Calculate placements (how many field entries beat each lineup score)
+            placements = np.sum(field_scores > lineup_scores[:, np.newaxis], axis=1) + 1
+            
+            # Calculate statistics
+            win_count = np.sum(placements == 1)
+            top_10pct = int(self.contest_entries * 0.10)
+            top10_count = np.sum(placements <= top_10pct)
+            
+            # Calculate cash and winnings
+            payouts = np.array([self._get_payout(p) for p in placements])
+            cash_count = np.sum(payouts > 0)
+            total_winnings = np.sum(payouts)
             
             # Calculate percentages
-            win_pct = (results['win_count'] / self.iterations) * 100
-            top10_pct = (results['top10_count'] / self.iterations) * 100
-            cash_pct = (results['cash_count'] / self.iterations) * 100
+            win_pct = (win_count / self.iterations) * 100
+            top10_pct = (top10_count / self.iterations) * 100
+            cash_pct = (cash_count / self.iterations) * 100
             
             # Calculate expected value and ROI
-            avg_winnings = results['total_winnings'] / self.iterations
+            avg_winnings = total_winnings / self.iterations
             entry_fee = self.payout_structure['entry_fee']
             expected_roi = ((avg_winnings - entry_fee) / entry_fee) * 100
+            
+            return {
+                'win_pct': win_pct,
+                'top10_pct': top10_pct,
+                'cash_pct': cash_pct,
+                'expected_winnings': avg_winnings,
+                'expected_roi': expected_roi,
+                'avg_placement': np.mean(placements),
+                'median_placement': np.median(placements)
+            }
             
         except Exception as e:
             print(f"Error in simulation: {e}")
@@ -97,16 +92,43 @@ class MonteCarloSimulator:
                 'avg_placement': self.contest_entries / 2,
                 'median_placement': self.contest_entries / 2
             }
+    
+    def _simulate_score_vectorized(self, lineup: Dict, n_iterations: int) -> np.ndarray:
+        """
+        Simulate lineup scores for all iterations at once (FAST)
         
-        return {
-            'win_pct': win_pct,
-            'top10_pct': top10_pct,
-            'cash_pct': cash_pct,
-            'expected_winnings': avg_winnings,
-            'expected_roi': expected_roi,
-            'avg_placement': np.mean(results['placements']),
-            'median_placement': np.median(results['placements'])
-        }
+        Returns:
+            Array of shape (n_iterations,) with lineup scores
+        """
+        lineup_scores = np.zeros(n_iterations)
+        
+        for player in lineup['players']:
+            mean = player['Projection']
+            stddev = player.get('StdDev', 6.0)
+            
+            # Generate all scores for this player at once
+            player_scores = np.random.normal(mean, stddev, n_iterations)
+            player_scores = np.maximum(0, player_scores)  # Can't score negative
+            
+            lineup_scores += player_scores
+        
+        return lineup_scores
+    
+    def _simulate_field_vectorized(self, n_iterations: int) -> np.ndarray:
+        """
+        Simulate field scores for all iterations at once (FAST)
+        
+        Returns:
+            Array of shape (n_iterations, contest_entries) with all field scores
+        """
+        # Generate all field scores at once
+        field_scores = np.random.normal(
+            loc=135,  # Average field score
+            scale=15,  # Variance in field
+            size=(n_iterations, self.contest_entries)
+        )
+        
+        return field_scores
     
     def _simulate_score(self, lineup: Dict) -> float:
         """
@@ -189,7 +211,9 @@ class MonteCarloSimulator:
         results = []
         
         for i, lineup in enumerate(lineups):
-            print(f"Simulating lineup {i+1}/{len(lineups)}...", end='\r')
+            # Progress indicator
+            progress = (i + 1) / len(lineups) * 100
+            print(f"Simulating lineup {i+1}/{len(lineups)} ({progress:.0f}%)...", end='\r')
             
             sim_result = self.simulate_lineup(lineup, field_ownership)
             
