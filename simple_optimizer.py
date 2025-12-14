@@ -47,55 +47,55 @@ class SimpleOptimizer:
         return lineups
     
     def _build_one_lineup(self) -> Dict:
-        """Build a single valid lineup"""
+        """Build a single valid lineup - use almost entire salary cap"""
         
         lineup = []
         budget = SALARY_CAP
         
-        # Step 1: QB (10-15% of budget) - Allow cheaper QBs to spend on studs elsewhere
-        qb_budget = int(budget * np.random.uniform(0.10, 0.15))
-        qb = self._pick_player('QB', qb_budget, [])
+        # Step 1: Pick QB first (we have full budget)
+        qb_max = min(7500, int(budget * 0.16))  # Up to $7500 or 16% of cap
+        qb = self._pick_player('QB', qb_max, [])
         if not qb:
             return None
         lineup.append(qb)
         budget -= qb['Salary']
         
-        # Step 2: Two RBs (30-38% of remaining) - Allow room for studs
-        rb_budget = int(budget * np.random.uniform(0.30, 0.38))
+        # Step 2: Pick 2 RBs (can be expensive)
         for i in range(2):
-            rb = self._pick_player('RB', rb_budget, [p['Name'] for p in lineup])
+            rb_max = int(budget * 0.22)  # Each RB can be up to 22% of remaining
+            rb = self._pick_player('RB', rb_max, [p['Name'] for p in lineup])
             if not rb:
                 return None
             lineup.append(rb)
             budget -= rb['Salary']
         
-        # Step 3: Three WRs (35-45% of remaining) - WRs are expensive, need room
-        wr_budget = int(budget * np.random.uniform(0.35, 0.45))
+        # Step 3: Pick 3 WRs (WRs are expensive studs)
         for i in range(3):
-            wr = self._pick_player('WR', wr_budget, [p['Name'] for p in lineup])
+            wr_max = int(budget * 0.24)  # Each WR can be up to 24% of remaining
+            wr = self._pick_player('WR', wr_max, [p['Name'] for p in lineup])
             if not wr:
                 return None
             lineup.append(wr)
             budget -= wr['Salary']
         
-        # Step 4: TE (use remaining, save for DST) - Can be cheap
-        te_budget = budget - 2500  # Save for DST
-        te = self._pick_player('TE', te_budget, [p['Name'] for p in lineup])
+        # Step 4: Pick TE (can be cheap or expensive)
+        te_max = int(budget * 0.45)  # Use up to 45% for TE
+        te = self._pick_player('TE', te_max, [p['Name'] for p in lineup])
         if not te:
             return None
         lineup.append(te)
         budget -= te['Salary']
         
-        # Step 5: FLEX (RB or WR, save for DST)
-        flex_budget = budget - 2200
-        flex = self._pick_player(['RB', 'WR'], flex_budget, [p['Name'] for p in lineup])
+        # Step 5: Pick FLEX (RB or WR) - use most of remaining
+        flex_max = int(budget * 0.65)  # Use 65% of what's left
+        flex = self._pick_player(['RB', 'WR'], flex_max, [p['Name'] for p in lineup])
         if not flex:
             return None
         flex['PositionSlot'] = f"FLEX ({flex['Position']})"
         lineup.append(flex)
         budget -= flex['Salary']
         
-        # Step 6: DST (whatever's left)
+        # Step 6: Pick DST (use what's left, usually $2-4k)
         dst = self._pick_player('DST', budget, [p['Name'] for p in lineup])
         if not dst:
             return None
@@ -118,7 +118,7 @@ class SimpleOptimizer:
         }
     
     def _pick_player(self, position, max_salary: int, used_names: List[str]) -> Dict:
-        """Pick a player balancing projection, value, and ownership"""
+        """Pick best player by projection with value consideration"""
         
         # Handle multiple positions
         if isinstance(position, list):
@@ -126,42 +126,34 @@ class SimpleOptimizer:
                 (self.player_pool['Position'].isin(position)) &
                 (~self.player_pool['Name'].isin(used_names)) &
                 (self.player_pool['Salary'] <= max_salary) &
-                (self.player_pool['Projection'] > 0)  # Must have projection
+                (self.player_pool['Projection'] > 0)
             ].copy()
         else:
             pool = self.player_pool[
                 (self.player_pool['Position'] == position) &
                 (~self.player_pool['Name'].isin(used_names)) &
                 (self.player_pool['Salary'] <= max_salary) &
-                (self.player_pool['Projection'] > 0)  # Must have projection
+                (self.player_pool['Projection'] > 0)
             ].copy()
         
         if pool.empty:
             return None
         
-        # For small_gpp: 70% projection weight, 30% ownership leverage
-        proj_weight = self.contest_rules['projection_weight']  # 0.70
-        own_weight = self.contest_rules['ownership_weight']    # 0.30
-        
-        # Normalize projection (0-1)
+        # Use a 80/20 blend: 80% projection, 20% value
         pool['proj_norm'] = pool['Projection'] / pool['Projection'].max()
+        pool['value_norm'] = pool['Value'] / pool['Value'].max()
         
-        # Ownership leverage (inverse) - but don't penalize popular players too much
-        # Lower ownership = higher score, but capped
-        pool['own_leverage'] = (100 - pool['Ownership']) / 100
-        pool['own_leverage'] = pool['own_leverage'].clip(0.3, 1.0)  # Don't go below 0.3 even for 100% owned
+        # Combined score: favor high projections but consider value
+        pool['pick_score'] = (pool['proj_norm'] * 0.80) + (pool['value_norm'] * 0.20)
         
-        # Combined score
-        pool['pick_score'] = (pool['proj_norm'] * proj_weight) + (pool['own_leverage'] * own_weight)
+        # Add randomness (±15%)
+        pool['pick_score'] *= np.random.uniform(0.85, 1.15, len(pool))
         
-        # Add randomness for diversity (±20%)
-        pool['pick_score'] *= np.random.uniform(0.8, 1.2, len(pool))
-        
-        # Pick from top 40% by score (was 30%, now allowing more high-projection players)
-        top_n = max(1, int(len(pool) * 0.4))
+        # Pick from top 35% by score
+        top_n = max(1, int(len(pool) * 0.35))
         top_pool = pool.nlargest(top_n, 'pick_score')
         
-        # Weight by score for final selection
+        # Weight selection by score
         weights = top_pool['pick_score'] / top_pool['pick_score'].sum()
         
         return top_pool.sample(1, weights=weights).iloc[0].to_dict()
