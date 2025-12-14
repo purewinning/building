@@ -134,7 +134,7 @@ DATA_SOURCES = {
 }
 
 # Simulation settings
-MONTE_CARLO_ITERATIONS = 10000
+MONTE_CARLO_ITERATIONS = 1000  # Reduced from 10,000 for speed
 LINEUP_GENERATION_COUNT = 1000  # Generate this many candidates before filtering
 
 # Output settings
