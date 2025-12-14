@@ -294,6 +294,11 @@ class DFSOptimizer:
             print(f"LINEUP #{i+1}")
             print("-" * 80)
             
+            # Display contest type and strategy
+            contest_type = lineup.get('contest_type', 'Unknown')
+            print(f"Contest: {contest_type}")
+            print()
+            
             # Display metrics (with safe defaults)
             roi = row.get('expected_roi', 0.0)
             win_pct = row.get('win_pct', 0.0)
