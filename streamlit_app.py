@@ -140,6 +140,104 @@ with tab1:
             # Save categorized data
             df.to_csv('/tmp/player_pool.csv', index=False)
             st.markdown("---")
+            
+            # PLAYER LOCKING SYSTEM
+            st.markdown("### 🔒 Lock Core Plays")
+            st.markdown("Select players you MUST have in every lineup:")
+            
+            # Initialize locks in session state
+            if 'locked_players' not in st.session_state:
+                st.session_state['locked_players'] = []
+            
+            col_lock1, col_lock2 = st.columns(2)
+            
+            with col_lock1:
+                st.markdown("**🎯 Primary Locks** (Foundation of lineup)")
+                
+                # QB Lock
+                qb_options = ['None'] + sorted(df[df['Position'] == 'QB']['Name'].tolist())
+                locked_qb = st.selectbox("Lock QB:", qb_options, key='lock_qb')
+                
+                # RB Locks
+                rb_options = ['None'] + sorted(df[df['Position'] == 'RB']['Name'].tolist())
+                locked_rb1 = st.selectbox("Lock RB #1:", rb_options, key='lock_rb1')
+                locked_rb2 = st.selectbox("Lock RB #2:", rb_options, key='lock_rb2')
+                
+                # WR Locks
+                wr_options = ['None'] + sorted(df[df['Position'] == 'WR']['Name'].tolist())
+                locked_wr1 = st.selectbox("Lock WR #1:", wr_options, key='lock_wr1')
+                locked_wr2 = st.selectbox("Lock WR #2:", wr_options, key='lock_wr2')
+            
+            with col_lock2:
+                st.markdown("**⚙️ Flex Locks** (Optional)")
+                
+                locked_wr3 = st.selectbox("Lock WR #3:", wr_options, key='lock_wr3')
+                
+                te_options = ['None'] + sorted(df[df['Position'] == 'TE']['Name'].tolist())
+                locked_te = st.selectbox("Lock TE:", te_options, key='lock_te')
+                
+                flex_options = ['None'] + sorted(df[df['Position'].isin(['RB', 'WR', 'TE'])]['Name'].tolist())
+                locked_flex = st.selectbox("Lock FLEX:", flex_options, key='lock_flex')
+                
+                dst_options = ['None'] + sorted(df[df['Position'] == 'DST']['Name'].tolist())
+                locked_dst = st.selectbox("Lock DST:", dst_options, key='lock_dst')
+            
+            # Collect all locks
+            locks = {
+                'QB': locked_qb if locked_qb != 'None' else None,
+                'RB': [locked_rb1 if locked_rb1 != 'None' else None, 
+                       locked_rb2 if locked_rb2 != 'None' else None],
+                'WR': [locked_wr1 if locked_wr1 != 'None' else None,
+                       locked_wr2 if locked_wr2 != 'None' else None,
+                       locked_wr3 if locked_wr3 != 'None' else None],
+                'TE': locked_te if locked_te != 'None' else None,
+                'FLEX': locked_flex if locked_flex != 'None' else None,
+                'DST': locked_dst if locked_dst != 'None' else None
+            }
+            
+            # Remove None values
+            locks['RB'] = [rb for rb in locks['RB'] if rb]
+            locks['WR'] = [wr for wr in locks['WR'] if wr]
+            
+            # Save locks
+            st.session_state['locked_players'] = locks
+            
+            # Show locked lineup summary
+            locked_count = sum([
+                1 if locks['QB'] else 0,
+                len(locks['RB']),
+                len(locks['WR']),
+                1 if locks['TE'] else 0,
+                1 if locks['FLEX'] else 0,
+                1 if locks['DST'] else 0
+            ])
+            
+            if locked_count > 0:
+                st.info(f"🔒 {locked_count} players locked. Optimizer will fill remaining {9 - locked_count} spots.")
+                
+                # Calculate locked salary
+                locked_names = []
+                if locks['QB']: locked_names.append(locks['QB'])
+                locked_names.extend(locks['RB'])
+                locked_names.extend(locks['WR'])
+                if locks['TE']: locked_names.append(locks['TE'])
+                if locks['FLEX']: locked_names.append(locks['FLEX'])
+                if locks['DST']: locked_names.append(locks['DST'])
+                
+                locked_df = df[df['Name'].isin(locked_names)]
+                locked_salary = locked_df['Salary'].sum()
+                locked_proj = locked_df['Projection'].sum()
+                locked_own = locked_df['Ownership'].sum()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Locked Salary", f"${locked_salary:,}")
+                with col2:
+                    st.metric("Locked Projection", f"{locked_proj:.1f} pts")
+                with col3:
+                    st.metric("Locked Own%", f"{locked_own:.1f}%")
+            
+            st.markdown("---")
     
     with col2:
         st.markdown("### Quick Actions")
@@ -151,14 +249,17 @@ with tab1:
                 # Initialize optimizer
                 optimizer = DFSOptimizer(contest_type=contest_type, entry_fee=entry_fee)
                 
+                # Get locks from session state
+                locks = st.session_state.get('locked_players', {})
+                
                 # Run optimization
                 if use_demo:
-                    results, lineups = optimizer.run('demo', num_lineups=num_lineups)
+                    results, lineups = optimizer.run('demo', num_lineups=num_lineups, locks=locks)
                 else:
                     # Save uploaded file temporarily
                     with open('/tmp/player_pool.csv', 'wb') as f:
                         f.write(uploaded_file.getbuffer())
-                    results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups)
+                    results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups, locks=locks)
                 
                 # Verify results
                 if results is None or lineups is None or len(lineups) == 0:
