@@ -3,6 +3,7 @@ DFS Optimizer - Main Application
 Free alternative to Stokastic's lineup builder
 """
 
+import sys
 import pandas as pd
 import argparse
 from typing import List, Dict
@@ -34,7 +35,7 @@ class DFSOptimizer:
             num_lineups: Number of lineups to generate
             
         Returns:
-            DataFrame with top lineups and their expected ROI
+            Tuple of (results DataFrame, lineups list)
         """
         
         print("=" * 80)
@@ -82,8 +83,9 @@ class DFSOptimizer:
         print("   ✓ Simulations complete")
         print()
         
-        # Step 6: Display results
-        self._display_results(results, lineups)
+        # Step 6: Display results (only in CLI mode, not when called from Streamlit)
+        if player_pool_path != 'demo' or len(sys.argv) > 1:
+            self._display_results(results, lineups)
         
         return results, lineups
     
@@ -225,18 +227,34 @@ class DFSOptimizer:
         print("=" * 80)
         print()
         
-        # Sort by expected ROI
-        results = results.sort_values('expected_roi', ascending=False)
+        # Ensure expected_roi column exists
+        if 'expected_roi' not in results.columns:
+            print("⚠️  Warning: Simulation results incomplete. Using projection ranking.")
+            results = results.sort_values('projection', ascending=False)
+        else:
+            # Sort by expected ROI
+            results = results.sort_values('expected_roi', ascending=False)
         
         for i, (idx, row) in enumerate(results.head(5).iterrows()):
-            lineup = lineups[int(row['lineup_id']) - 1]
+            lineup_id = int(row['lineup_id']) - 1
+            if lineup_id >= len(lineups):
+                continue
+                
+            lineup = lineups[lineup_id]
             
             print(f"LINEUP #{i+1}")
             print("-" * 80)
-            print(f"Expected ROI: {row['expected_roi']:.1f}%")
-            print(f"Win Probability: {row['win_pct']:.3f}%")
-            print(f"Top 10% Rate: {row['top10_pct']:.1f}%")
-            print(f"Cash Rate: {row['cash_pct']:.1f}%")
+            
+            # Display metrics (with safe defaults)
+            roi = row.get('expected_roi', 0.0)
+            win_pct = row.get('win_pct', 0.0)
+            top10_pct = row.get('top10_pct', 0.0)
+            cash_pct = row.get('cash_pct', 0.0)
+            
+            print(f"Expected ROI: {roi:.1f}%")
+            print(f"Win Probability: {win_pct:.3f}%")
+            print(f"Top 10% Rate: {top10_pct:.1f}%")
+            print(f"Cash Rate: {cash_pct:.1f}%")
             print()
             print(f"Salary: ${row['salary']:,} / $50,000")
             print(f"Projection: {row['projection']:.1f} pts")
