@@ -79,23 +79,32 @@ with tab1:
     
     if generate_button:
         with st.spinner("Generating optimized lineups..."):
-            # Initialize optimizer
-            optimizer = DFSOptimizer(contest_type=contest_type, entry_fee=entry_fee)
-            
-            # Run optimization
-            if use_demo:
-                results, lineups = optimizer.run('demo', num_lineups=num_lineups)
-            else:
-                # Save uploaded file temporarily
-                with open('/tmp/player_pool.csv', 'wb') as f:
-                    f.write(uploaded_file.getbuffer())
-                results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups)
-            
-            # Store in session state
-            st.session_state['results'] = results
-            st.session_state['lineups'] = lineups
-        
-        st.success("✅ Lineups generated successfully!")
+            try:
+                # Initialize optimizer
+                optimizer = DFSOptimizer(contest_type=contest_type, entry_fee=entry_fee)
+                
+                # Run optimization
+                if use_demo:
+                    results, lineups = optimizer.run('demo', num_lineups=num_lineups)
+                else:
+                    # Save uploaded file temporarily
+                    with open('/tmp/player_pool.csv', 'wb') as f:
+                        f.write(uploaded_file.getbuffer())
+                    results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups)
+                
+                # Verify results
+                if results is None or lineups is None or len(lineups) == 0:
+                    st.error("Failed to generate lineups. Please check your player pool.")
+                else:
+                    # Store in session state
+                    st.session_state['results'] = results
+                    st.session_state['lineups'] = lineups
+                    st.success("✅ Lineups generated successfully!")
+                    
+            except Exception as e:
+                st.error(f"Error generating lineups: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
     
     # Display results if available
     if 'results' in st.session_state:
@@ -105,25 +114,40 @@ with tab1:
         results = st.session_state['results']
         lineups = st.session_state['lineups']
         
-        # Sort by ROI
-        results_sorted = results.sort_values('expected_roi', ascending=False)
+        # Ensure expected columns exist
+        if 'expected_roi' not in results.columns:
+            st.warning("⚠️ Simulation incomplete. Showing lineups ranked by projection.")
+            results_sorted = results.sort_values('projection', ascending=False)
+        else:
+            # Sort by ROI
+            results_sorted = results.sort_values('expected_roi', ascending=False)
         
         # Display top 5 lineups
         for i, (idx, row) in enumerate(results_sorted.head(5).iterrows()):
             lineup_id = int(row['lineup_id']) - 1
+            
+            if lineup_id >= len(lineups):
+                continue
+                
             lineup = lineups[lineup_id]
             
-            with st.expander(f"**Lineup #{i+1}** - ROI: {row['expected_roi']:.1f}% | Proj: {row['projection']:.1f} pts", expanded=(i==0)):
+            # Get metrics with safe defaults
+            roi = row.get('expected_roi', 0.0)
+            win_pct = row.get('win_pct', 0.0)
+            top10_pct = row.get('top10_pct', 0.0)
+            cash_pct = row.get('cash_pct', 0.0)
+            
+            with st.expander(f"**Lineup #{i+1}** - ROI: {roi:.1f}% | Proj: {row['projection']:.1f} pts", expanded=(i==0)):
                 col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
-                    st.metric("Expected ROI", f"{row['expected_roi']:.1f}%")
+                    st.metric("Expected ROI", f"{roi:.1f}%")
                 with col2:
-                    st.metric("Win %", f"{row['win_pct']:.3f}%")
+                    st.metric("Win %", f"{win_pct:.3f}%")
                 with col3:
-                    st.metric("Top 10%", f"{row['top10_pct']:.1f}%")
+                    st.metric("Top 10%", f"{top10_pct:.1f}%")
                 with col4:
-                    st.metric("Cash %", f"{row['cash_pct']:.1f}%")
+                    st.metric("Cash %", f"{cash_pct:.1f}%")
                 
                 st.markdown("---")
                 
