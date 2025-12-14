@@ -106,6 +106,18 @@ class SimpleOptimizer:
         total_sal = sum(p['Salary'] for p in lineup)
         total_proj = sum(p['Projection'] for p in lineup)
         total_own = sum(p['Ownership'] for p in lineup)
+        avg_own = total_own / 9
+        
+        # Validate ownership is in acceptable range for contest
+        own_target_min, own_target_max = self.contest_rules['ownership_target_avg']
+        
+        # Allow 20% tolerance on ownership targets
+        own_min_relaxed = own_target_min * 0.80
+        own_max_relaxed = own_target_max * 1.20
+        
+        # Reject if ownership is way off (too chalky or too contrarian)
+        if avg_own < own_min_relaxed or avg_own > own_max_relaxed:
+            return None  # Try again
         
         return {
             'players': lineup,
@@ -113,12 +125,13 @@ class SimpleOptimizer:
             'salary_remaining': SALARY_CAP - total_sal,
             'projection': total_proj,
             'ownership': total_own,
-            'ownership_avg': total_own / 9,
-            'value': total_proj / (total_sal / 1000)
+            'ownership_avg': avg_own,
+            'value': total_proj / (total_sal / 1000),
+            'ownership_target': f"{own_target_min}-{own_target_max}%"
         }
     
     def _pick_player(self, position, max_salary: int, used_names: List[str]) -> Dict:
-        """Pick best player by projection with value consideration"""
+        """Pick best player using contest-specific strategy"""
         
         # Handle multiple positions
         if isinstance(position, list):
@@ -139,18 +152,33 @@ class SimpleOptimizer:
         if pool.empty:
             return None
         
-        # Use a 80/20 blend: 80% projection, 20% value
+        # Get contest-specific weights
+        proj_weight = self.contest_rules['projection_weight']   # small_gpp: 0.70
+        own_weight = self.contest_rules['ownership_weight']     # small_gpp: 0.30
+        
+        # Normalize projection (0-1)
         pool['proj_norm'] = pool['Projection'] / pool['Projection'].max()
-        pool['value_norm'] = pool['Value'] / pool['Value'].max()
         
-        # Combined score: favor high projections but consider value
-        pool['pick_score'] = (pool['proj_norm'] * 0.80) + (pool['value_norm'] * 0.20)
+        # Ownership leverage: Lower ownership = higher score
+        # For small_gpp (4,444 entries): Target 12-17% avg ownership
+        # This means we want SOME leverage but not full contrarian
+        pool['own_leverage'] = (100 - pool['Ownership']) / 100
         
-        # Add randomness (±15%)
+        # Combined score based on contest type
+        pool['pick_score'] = (pool['proj_norm'] * proj_weight) + (pool['own_leverage'] * own_weight)
+        
+        # Add randomness for diversity (±15%)
         pool['pick_score'] *= np.random.uniform(0.85, 1.15, len(pool))
         
-        # Pick from top 35% by score
-        top_n = max(1, int(len(pool) * 0.35))
+        # Pick from top X% based on contest size
+        # Small GPP (4,444): Top 40% (more studs allowed)
+        # Large GPP (150k): Top 25% (more contrarian)
+        if self.contest_rules['entries'] <= 10000:
+            top_pct = 0.40  # Small field: can play studs
+        else:
+            top_pct = 0.25  # Large field: need more leverage
+        
+        top_n = max(1, int(len(pool) * top_pct))
         top_pool = pool.nlargest(top_n, 'pick_score')
         
         # Weight selection by score
