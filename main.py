@@ -77,8 +77,7 @@ class DFSOptimizer:
         print(f"🔨 Building {num_lineups} optimized lineups...")
         lineups = self.optimizer.generate_lineups(
             player_pool, 
-            num_lineups=num_lineups,
-            contest_type=self.contest_type
+            num_lineups=num_lineups
         )
         
         if not lineups or len(lineups) == 0:
