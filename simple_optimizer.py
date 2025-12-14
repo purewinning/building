@@ -53,11 +53,44 @@ class SimpleOptimizer:
         budget = SALARY_CAP
         correlations = []  # Track all correlations
         
-        # Step 1: Pick QB first
-        qb_max = min(7500, budget)
-        qb = self._pick_player('QB', qb_max, [])
+        # Step 1: Pick QB - PRIORITIZE VALUE/LEVERAGE QBs to save salary for studs
+        # Strategy: Low owned ($5-6.5k) QBs to spend up at RB/WR
+        # 60% chance: Cheap elite value QB ($5-6.5k, 3-12% owned, 18+ projection)
+        # 40% chance: Mid-tier QB ($6.5-7.5k)
+        
+        qb_strategy = np.random.random()
+        
+        if qb_strategy < 0.60:
+            # LEVERAGE QB STRATEGY - Cheap, low owned, high value
+            qb_pool = self.player_pool[
+                (self.player_pool['Position'] == 'QB') &
+                (self.player_pool['Salary'] >= 5000) &
+                (self.player_pool['Salary'] <= 6500) &
+                (self.player_pool['Ownership'] <= 12) &
+                (self.player_pool['Projection'] >= 18)
+            ].copy()
+            
+            if not qb_pool.empty:
+                # Weight by value (pts/$) and low ownership
+                qb_pool['value_score'] = qb_pool['Projection'] / (qb_pool['Salary'] / 1000)
+                qb_pool['own_leverage'] = (100 - qb_pool['Ownership']) / 100
+                qb_pool['qb_score'] = (qb_pool['value_score'] * 0.60) + (qb_pool['own_leverage'] * 0.40)
+                qb_pool['qb_score'] *= np.random.uniform(0.90, 1.10, len(qb_pool))
+                
+                weights = qb_pool['qb_score'] / qb_pool['qb_score'].sum()
+                qb = qb_pool.sample(1, weights=weights).iloc[0].to_dict()
+                correlations.append(f"{qb['Name']} (value QB ${qb['Salary']:,} for studs elsewhere)")
+            else:
+                # Fallback to regular pick
+                qb = self._pick_player('QB', 7500, [])
+        else:
+            # Standard QB pick (mid-tier)
+            qb_max = 6800  # Cap at $6.8k to still save money
+            qb = self._pick_player('QB', qb_max, [])
+        
         if not qb:
             return None
+        
         lineup.append(qb)
         budget -= qb['Salary']
         
@@ -117,9 +150,16 @@ class SimpleOptimizer:
                 correlations.append(f"{bring_back['Name']} (bring-back vs {qb_team})")
         
         # Step 4: Fill RBs (need 2 total, accounting for bring-back)
+        # With cheap QB, we have more budget for STUD RBs
         rbs_needed = 2 - positions_filled.get('RB', 0)
         for i in range(rbs_needed):
-            rb_max = min(9000, int(budget * 0.25))
+            # First RB: Allow full $9k (CMC, Gibbs tier)
+            # Second RB: Still allow expensive ($7-9k)
+            if i == 0:
+                rb_max = min(9000, int(budget * 0.30))  # 30% for RB1 (was 25%)
+            else:
+                rb_max = min(9000, int(budget * 0.30))  # 30% for RB2 (was 25%)
+            
             rb = self._pick_player('RB', rb_max, used_names)
             if not rb:
                 return None
@@ -129,9 +169,17 @@ class SimpleOptimizer:
             positions_filled['RB'] = positions_filled.get('RB', 0) + 1
         
         # Step 5: Fill remaining WRs (need 3 total)
+        # With QB savings, can afford multiple elite WRs
         wrs_needed = 3 - positions_filled['WR']
         for i in range(wrs_needed):
-            wr_max = min(8700, int(budget * (0.28 if i == 0 else 0.32)))
+            # All WRs can be studs now ($8-8.7k tier)
+            if i == 0:
+                wr_max = min(8700, int(budget * 0.32))  # 32% for WR1
+            elif i == 1:
+                wr_max = min(8700, int(budget * 0.35))  # 35% for WR2
+            else:
+                wr_max = min(8700, int(budget * 0.40))  # 40% for WR3
+            
             wr = self._pick_player('WR', wr_max, used_names)
             if not wr:
                 return None
