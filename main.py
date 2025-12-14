@@ -49,16 +49,28 @@ class DFSOptimizer:
         print(f"   Loaded {len(player_pool)} players")
         print()
         
-        # Step 2: Generate projections
-        print("📊 Generating projections...")
-        player_pool = self.projection_engine.generate_projections(player_pool)
-        print(f"   ✓ Projections generated")
+        # Step 2: Generate projections (skip if already present)
+        if 'Projection' not in player_pool.columns or player_pool['Projection'].isna().all():
+            print("📊 Generating projections...")
+            player_pool = self.projection_engine.generate_projections(player_pool)
+            print(f"   ✓ Projections generated")
+        else:
+            print("📊 Using existing projections from file...")
+            # Just add Value column if missing
+            if 'Value' not in player_pool.columns:
+                player_pool['Value'] = player_pool['Projection'] / (player_pool['Salary'] / 1000)
+            # Add StdDev if missing
+            if 'StdDev' not in player_pool.columns:
+                player_pool['StdDev'] = self.projection_engine._position_variance(player_pool)
         print()
         
-        # Step 3: Project ownership
-        print("👥 Projecting ownership...")
-        player_pool = self.ownership_projector.project_ownership(player_pool)
-        print(f"   ✓ Ownership projected")
+        # Step 3: Project ownership (skip if already present)
+        if 'Ownership' not in player_pool.columns or player_pool['Ownership'].isna().all():
+            print("👥 Projecting ownership...")
+            player_pool = self.ownership_projector.project_ownership(player_pool)
+            print(f"   ✓ Ownership projected")
+        else:
+            print("👥 Using existing ownership from file...")
         print()
         
         # Step 4: Build lineups
@@ -100,24 +112,54 @@ class DFSOptimizer:
     def _load_player_pool(self, path: str) -> pd.DataFrame:
         """
         Load player pool from CSV
-        Expected columns: Name, Position, Salary, Team, Opponent
+        Expected columns from Stokastic: Player, Salary, Position, Team, Opponent, Projection, Ownership %
         """
         try:
             df = pd.read_csv(path)
             
-            # Validate required columns
-            required = ['Name', 'Position', 'Salary', 'Team']
+            # Map Stokastic column names to our internal names
+            column_mapping = {
+                'Player': 'Name',
+                'Ownership %': 'Ownership',
+                'Std Dev': 'StdDev'
+            }
+            
+            # Rename columns
+            df = df.rename(columns=column_mapping)
+            
+            # Validate required columns exist
+            required = ['Name', 'Position', 'Salary', 'Team', 'Projection', 'Ownership']
             missing = [col for col in required if col not in df.columns]
             
             if missing:
                 print(f"⚠️  Warning: Missing columns: {missing}")
-                print("   Creating placeholder data for demo...")
-                df = self._create_demo_player_pool()
+                print("   Using demo data instead...")
+                return self._create_demo_player_pool()
+            
+            # Ensure numeric columns are float
+            df['Salary'] = pd.to_numeric(df['Salary'], errors='coerce')
+            df['Projection'] = pd.to_numeric(df['Projection'], errors='coerce')
+            df['Ownership'] = pd.to_numeric(df['Ownership'], errors='coerce')
+            
+            # Add StdDev if not present
+            if 'StdDev' not in df.columns:
+                # Use position-based defaults
+                position_std = {'QB': 7.0, 'RB': 7.5, 'WR': 8.5, 'TE': 6.0, 'DST': 4.0}
+                df['StdDev'] = df['Position'].map(position_std).fillna(7.0)
+            
+            # Drop any rows with missing critical data
+            df = df.dropna(subset=['Name', 'Position', 'Salary', 'Projection'])
+            
+            print(f"   ✓ Loaded {len(df)} players from file")
             
             return df
             
         except FileNotFoundError:
             print(f"⚠️  File not found: {path}")
+            print("   Creating demo player pool...")
+            return self._create_demo_player_pool()
+        except Exception as e:
+            print(f"⚠️  Error loading file: {e}")
             print("   Creating demo player pool...")
             return self._create_demo_player_pool()
     
