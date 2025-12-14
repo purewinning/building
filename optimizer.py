@@ -166,7 +166,7 @@ class LineupOptimizer:
             else:
                 return None
         
-        # Step 5: Fill TE if not already have one
+        # Step 5: Fill TE if not already have one from stack
         current_tes = sum(1 for p in lineup_players if p['Position'] == 'TE')
         if current_tes == 0:
             used_names = [p['Name'] for p in lineup_players]
@@ -184,10 +184,25 @@ class LineupOptimizer:
             else:
                 return None
         
-        # Step 6: Fill FLEX (RB/WR/TE)
+        # Step 6: Fill FLEX (RB/WR/TE) - prefer RB or WR over TE
         used_names = [p['Name'] for p in lineup_players]
+        
+        # Count current positions to avoid duplicates
+        current_positions = {}
+        for p in lineup_players:
+            pos = p['Position']
+            current_positions[pos] = current_positions.get(pos, 0) + 1
+        
+        # We already have 1 TE required, so for FLEX prefer RB/WR
+        # Only use TE in FLEX if we have good value
+        flex_positions = ['RB', 'WR']
+        
+        # Add TE to flex options with lower probability
+        if np.random.random() < 0.15:  # Only 15% chance to consider TE for FLEX
+            flex_positions.append('TE')
+        
         flex_pool = self.player_pool[
-            (self.player_pool['Position'].isin(['RB', 'WR', 'TE'])) &
+            (self.player_pool['Position'].isin(flex_positions)) &
             (~self.player_pool['Name'].isin(used_names)) &
             (self.player_pool['Salary'] <= remaining_salary * 0.5)
         ].copy()
@@ -274,8 +289,8 @@ class LineupOptimizer:
         if position_counts.get('WR', 0) < 3:
             return False
         
-        # Must have TE
-        if position_counts.get('TE', 0) < 1:
+        # Must have exactly 1 TE (not 2)
+        if position_counts.get('TE', 0) != 1:
             return False
         
         # Must have DST
