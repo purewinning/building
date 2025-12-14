@@ -134,17 +134,30 @@ class SimpleOptimizer:
         if total_sal < 48000:
             return None  # Not spending enough, try again
         
-        # Validate ownership is reasonable for contest
+        # CONTEST-SPECIFIC ownership validation
         own_target_min, own_target_max = self.contest_rules['ownership_target_avg']
+        contest_entries = self.contest_rules['entries']
         
-        # Very relaxed tolerance - we want high scoring, ownership is secondary
-        # Allow 50% below target, 80% above target
-        own_min_relaxed = own_target_min * 0.50  # Can go lower (more contrarian OK)
-        own_max_relaxed = own_target_max * 1.80  # Can go much higher (chalk OK!)
-        
-        # Only reject if EXTREMELY off target
-        if avg_own < own_min_relaxed or avg_own > own_max_relaxed:
-            return None  # Try again
+        if contest_entries >= 100000:
+            # MILLIONAIRE MAKER: Very strict low ownership
+            # Target: 3-8% avg, allow up to 15% max
+            if avg_own > 15:
+                return None  # Too chalky for Milly Maker
+                
+        elif contest_entries >= 10000:
+            # MID GPP: Moderate ownership
+            # Target: 5-10% avg, allow up to 20% max
+            if avg_own > 20:
+                return None
+                
+        else:
+            # SMALL GPP: More relaxed, can play chalk
+            # Target: 12-17% avg, allow wide range
+            own_min_relaxed = own_target_min * 0.50
+            own_max_relaxed = own_target_max * 1.80
+            
+            if avg_own < own_min_relaxed or avg_own > own_max_relaxed:
+                return None
         
         return {
             'players': lineup,
@@ -154,11 +167,12 @@ class SimpleOptimizer:
             'ownership': total_own,
             'ownership_avg': avg_own,
             'value': total_proj / (total_sal / 1000),
-            'ownership_target': f"{own_target_min}-{own_target_max}%"
+            'ownership_target': f"{own_target_min}-{own_target_max}%",
+            'contest_type': self.contest_rules['name']
         }
     
     def _pick_player(self, position, max_salary: int, used_names: List[str]) -> Dict:
-        """Pick player prioritizing PROJECTION first, then add leverage smartly"""
+        """Pick player using CONTEST-SPECIFIC strategy"""
         
         # Handle multiple positions
         if isinstance(position, list):
@@ -179,36 +193,66 @@ class SimpleOptimizer:
         if pool.empty:
             return None
         
-        # Sort by projection descending
-        pool = pool.sort_values('Projection', ascending=False).reset_index(drop=True)
+        # CONTEST-SPECIFIC STRATEGY
+        contest_entries = self.contest_rules['entries']
         
-        # STRATEGY: Pick from top projection tier, occasionally go down a tier for leverage
-        # 70% of time: Pick from top 20% by projection (STUDS)
-        # 30% of time: Pick from top 40% by projection (includes some value)
-        
-        if np.random.random() < 0.70:
-            # 70% chance: Pick a STUD (top 20% by projection)
-            top_n = max(1, int(len(pool) * 0.20))
-            candidate_pool = pool.head(top_n)
+        if contest_entries >= 100000:
+            # MILLIONAIRE MAKER STRATEGY (150k+ entries)
+            # Need extreme leverage + ceiling
+            # 30% projection, 70% ownership leverage
+            
+            pool['proj_norm'] = pool['Projection'] / pool['Projection'].max()
+            pool['own_leverage'] = (100 - pool['Ownership']) / 100
+            
+            # Heavily favor LOW ownership (70/30 split)
+            pool['pick_score'] = (pool['proj_norm'] * 0.30) + (pool['own_leverage'] * 0.70)
+            
+            # Add boom% consideration if available
+            if 'Boom' in pool.columns:
+                pool['boom_norm'] = pool['Boom'] / pool['Boom'].max()
+                pool['pick_score'] = (pool['proj_norm'] * 0.25) + (pool['own_leverage'] * 0.60) + (pool['boom_norm'] * 0.15)
+            
+            # Pick from top 30% by leverage score (more contrarian)
+            top_n = max(1, int(len(pool) * 0.30))
+            
+        elif contest_entries >= 10000:
+            # MID-SIZE GPP (14k entries)
+            # Balanced: 50% projection, 50% ownership
+            
+            pool['proj_norm'] = pool['Projection'] / pool['Projection'].max()
+            pool['own_leverage'] = (100 - pool['Ownership']) / 100
+            
+            pool['pick_score'] = (pool['proj_norm'] * 0.50) + (pool['own_leverage'] * 0.50)
+            
+            # Pick from top 35%
+            top_n = max(1, int(len(pool) * 0.35))
+            
         else:
-            # 30% chance: Allow some value (top 40% by projection)
-            top_n = max(1, int(len(pool) * 0.40))
-            candidate_pool = pool.head(top_n)
+            # SMALL GPP (4,444 entries)
+            # Favor projection: 70% projection, 30% ownership leverage
+            # This is what we tested earlier
+            
+            pool['proj_norm'] = pool['Projection'] / pool['Projection'].max()
+            pool['own_leverage'] = (100 - pool['Ownership']) / 100
+            
+            pool['pick_score'] = (pool['proj_norm'] * 0.70) + (pool['own_leverage'] * 0.30)
+            
+            # 70% chance pick from top 20% (studs), 30% chance from top 40% (value)
+            if np.random.random() < 0.70:
+                top_n = max(1, int(len(pool) * 0.20))
+            else:
+                top_n = max(1, int(len(pool) * 0.40))
         
-        # Within the candidate pool, weight by projection and a tiny bit of ownership leverage
-        candidate_pool['proj_norm'] = candidate_pool['Projection'] / candidate_pool['Projection'].max()
-        candidate_pool['own_leverage'] = (100 - candidate_pool['Ownership']) / 100
+        # Add randomness for variety
+        pool['pick_score'] *= np.random.uniform(0.90, 1.10, len(pool))
         
-        # 90% projection, 10% ownership (heavily favor projection)
-        candidate_pool['pick_score'] = (candidate_pool['proj_norm'] * 0.90) + (candidate_pool['own_leverage'] * 0.10)
+        # Select from top pool
+        top_pool = pool.nlargest(top_n, 'pick_score')
         
-        # Add slight randomness for variety
-        candidate_pool['pick_score'] *= np.random.uniform(0.90, 1.10, len(candidate_pool))
+        # Weight by score
+        weights = top_pool['pick_score'] / top_pool['pick_score'].sum()
         
-        # Pick weighted by score
-        weights = candidate_pool['pick_score'] / candidate_pool['pick_score'].sum()
-        
-        return candidate_pool.sample(1, weights=weights).iloc[0].to_dict()
+        return top_pool.sample(1, weights=weights).iloc[0].to_dict()
     
     def _is_duplicate(self, lineup: Dict, lineups: List[Dict]) -> bool:
         """Check if too similar to existing"""
