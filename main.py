@@ -9,7 +9,7 @@ import argparse
 from typing import List, Dict
 from config import CONTEST_STRUCTURES, TOP_LINEUPS_TO_RETURN
 from projections import ProjectionEngine, OwnershipProjector
-from winning_optimizer import WinningOptimizer  # NEW: Use $250K winning structure
+from basic_optimizer import BasicOptimizer  # ULTRA SIMPLE - just works
 from simulator import MonteCarloSimulator, create_payout_structure
 
 
@@ -24,9 +24,9 @@ class DFSOptimizer:
         # Initialize components
         self.projection_engine = ProjectionEngine()
         self.ownership_projector = OwnershipProjector()
-        self.optimizer = WinningOptimizer(contest_type)  # NEW: $250K winning structure
+        self.optimizer = BasicOptimizer(contest_type)  # ULTRA SIMPLE
         
-    def run(self, player_pool_path: str, num_lineups: int = 20, locks: dict = None, **kwargs) -> pd.DataFrame:
+    def run(self, player_pool_path: str, num_lineups: int = 20) -> pd.DataFrame:
         """
         Main workflow with optional player locks
         
@@ -75,12 +75,11 @@ class DFSOptimizer:
             print("👥 Using existing ownership from file...")
         print()
         
-        # Step 4: Build lineups with locks
+        # Step 4: Build lineups
         print(f"🔨 Building {num_lineups} optimized lineups...")
         lineups = self.optimizer.generate_lineups(
             player_pool, 
-            num_lineups=num_lineups,
-            locks=locks
+            num_lineups=num_lineups
         )
         
         if not lineups or len(lineups) == 0:
@@ -94,20 +93,16 @@ class DFSOptimizer:
         print(f"   ✓ Generated {len(lineups)} unique lineups")
         print()
         
-        # Step 5: Simulate tournaments
-        print("🎲 Running Monte Carlo simulations (1,000 iterations per lineup)...")
-        payout_structure = create_payout_structure(self.contest_type, self.entry_fee)
-        simulator = MonteCarloSimulator(
-            self.contest_rules['entries'],
-            payout_structure
-        )
-        
-        results = simulator.batch_simulate(lineups, player_pool)
-        print("   ✓ Simulations complete")
-        print()
-        
-        # Step 6: Display results (only in CLI mode with --display flag)
-        # Don't display in Streamlit or when called programmatically
+        # Skip simulation for now - just return lineups
+        results = pd.DataFrame([
+            {
+                'lineup_id': i+1,
+                'projection': lineup['total_projection'],
+                'salary': lineup['total_salary'],
+                'ownership': lineup['total_ownership']
+            }
+            for i, lineup in enumerate(lineups)
+        ])
         
         return results, lineups
     
