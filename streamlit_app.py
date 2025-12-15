@@ -1,106 +1,89 @@
 """
-Streamlit Web Interface for DFS Optimizer
+Streamlit DFS Optimizer - STREAMLINED VERSION
 """
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 from config import CONTEST_STRUCTURES
 from main import DFSOptimizer
 
 st.set_page_config(page_title="DFS Optimizer", page_icon="🏈", layout="wide")
 
 st.title("🏈 DFS Lineup Optimizer")
-st.markdown("### Winning Structure Builder")
 
-# Sidebar configuration
-st.sidebar.header("⚙️ Strategy Selection")
+# Sidebar
+st.sidebar.header("⚙️ Settings")
 
-# STRATEGY TEMPLATE SELECTION
-strategy_templates = {
-    'single_entry_grinder': {
-        'name': '🎯 Single-Entry Grinder (MY STRATEGY)',
-        'description': '1 entry per tournament, 150 total. Based on Rank 6 & 7 winners who beat 100+ entry players.',
-        'config': 'single_entry_grinder',
-        'tooltip': 'Ultra-leverage QB (3-8%), Core RB mandatory, 10-13% avg ownership. PERFECT for your 150-tournament approach!'
-    },
-    'small_gpp_multi': {
-        'name': '🏆 Multi-Entry GPP (Power User)',
-        'description': '100-150 entries in ONE tournament. $250K winner strategy.',
-        'config': 'small_gpp',
-        'tooltip': 'Build portfolio: 35% leverage QB stacks, 40% game stacks, 70% core RB usage. For when you multi-enter.'
-    },
-    'single_entry_only': {
-        'name': '🎲 Single-Entry Only Tournament',
-        'description': 'For tournaments that ONLY allow 1 entry (like the 4,444 contest).',
-        'config': 'single_entry_grinder',  # Same as grinder but note required
-        'tooltip': 'Core RB is 100% MANDATORY (was in all Top 10). Slightly higher ownership okay (11-14%).'
-    },
-    'satellite': {
-        'name': '🎫 Satellite Qualifier (Extreme Leverage)',
-        'description': 'Winner-take-all satellites for tournament tickets.',
-        'config': 'single_entry_grinder',  # Will adjust in code
-        'tooltip': 'Go extreme: 2-5% QB, all leverage, 6-10% avg ownership. Boom or bust for tickets.'
-    },
-    'high_stakes': {
-        'name': '💰 High-Stakes ($500+)',
-        'description': 'Conservative approach for expensive tournaments.',
-        'config': 'small_gpp',  # Will adjust
-        'tooltip': 'More conservative: 5-10% QB, higher floor, 12-15% avg ownership.'
-    }
-}
-
-st.sidebar.markdown("### 📋 Choose Your Strategy:")
-
-selected_strategy = st.sidebar.selectbox(
-    "Strategy Template",
-    options=list(strategy_templates.keys()),
-    format_func=lambda x: strategy_templates[x]['name'],
-    help="Select the strategy that matches how you're entering tournaments"
+contest_type = st.sidebar.selectbox(
+    "Strategy",
+    options=['single_entry_grinder', 'small_gpp', 'mid_gpp', 'milly_maker'],
+    format_func=lambda x: {
+        'single_entry_grinder': '🎯 Single-Entry Grinder',
+        'small_gpp': '🏆 Multi-Entry GPP',
+        'mid_gpp': '📊 Mid-GPP',
+        'milly_maker': '💰 Milly Maker'
+    }[x]
 )
 
-# Display strategy info
-strategy = strategy_templates[selected_strategy]
-st.sidebar.info(f"**{strategy['description']}**\n\n{strategy['tooltip']}")
+num_lineups = st.sidebar.slider("Lineups", 1, 50, 20)
 
-# Set contest type based on strategy FIRST (before any CONTEST_STRUCTURES access)
-contest_type = strategy['config']
-
-# Allow advanced users to override
-with st.sidebar.expander("🔧 Advanced: Manual Contest Type"):
-    contest_type_override = st.selectbox(
-        "Override Contest Type",
-        options=['Auto (use strategy template)'] + list(CONTEST_STRUCTURES.keys()),
-        format_func=lambda x: x if x == 'Auto (use strategy template)' else CONTEST_STRUCTURES[x]['name']
-    )
-    
-    if contest_type_override != 'Auto (use strategy template)':
-        contest_type = contest_type_override
-        st.warning("⚠️ Manual override active - strategy template settings ignored")
-
-# NOW we can safely access CONTEST_STRUCTURES[contest_type]
-entry_fee = st.sidebar.number_input(
-    "Entry Fee ($)",
-    min_value=1,
-    max_value=1000,
-    value=100,
-    step=1
-)
-
-num_lineups = st.sidebar.slider(
-    "Number of Lineups to Build",
-    min_value=1,
-    max_value=50,
-    value=20,
-    step=1,
-    help="For Single-Entry Grinder: Build 20-50 at a time, repeat for all 150 tournaments"
-)
-
-# Display contest rules (NOW contest_type is guaranteed to be valid)
-st.sidebar.markdown("---")
-st.sidebar.subheader("📊 Strategy Settings")
+# Show strategy info
 rules = CONTEST_STRUCTURES[contest_type]
+st.sidebar.markdown("---")
+st.sidebar.markdown(f"**Target Own:** {rules['ownership_target_avg'][0]}-{rules['ownership_target_avg'][1]}%")
+st.sidebar.markdown(f"**QB Own:** {rules['qb_ownership_target'][0]}-{rules['qb_ownership_target'][1]}%")
+
+# Main
+uploaded_file = st.file_uploader("Upload CSV", type=['csv'])
+
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    if 'Player' in df.columns:
+        df = df.rename(columns={'Player': 'Name', 'Ownership %': 'Ownership'})
+    
+    st.success(f"✅ {len(df)} players loaded")
+    df.to_csv('/tmp/player_pool.csv', index=False)
+    use_demo = False
+else:
+    st.info("Upload Stokastic CSV")
+    use_demo = True
+
+if st.button("🚀 Generate Lineups", type="primary"):
+    with st.spinner("Building..."):
+        try:
+            optimizer = DFSOptimizer(contest_type=contest_type, entry_fee=100)
+            
+            # Simple call without locks
+            if use_demo:
+                results, lineups = optimizer.run('demo', num_lineups=num_lineups)
+            else:
+                results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups)
+            
+            if lineups and len(lineups) > 0:
+                st.session_state['results'] = results  
+                st.session_state['lineups'] = lineups
+                st.success(f"✅ {len(lineups)} lineups built")
+            else:
+                st.error("Failed to build lineups")
+                
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+# Display
+if 'lineups' in st.session_state:
+    st.markdown("---")
+    lineups = st.session_state['lineups']
+    
+    for i, lineup in enumerate(lineups[:10]):
+        players = lineup.get('players', [])
+        proj = lineup.get('total_projection', 0)
+        own = lineup.get('avg_ownership', 0)
+        
+        with st.expander(f"Lineup {i+1} - {proj:.1f} pts | {own:.1f}% own"):
+            for p in players:
+                pos = p.get('PositionSlot', p.get('Position'))
+                st.text(f"{pos:6} {p.get('Name'):25} ${p.get('Salary'):5,} {p.get('Projection'):5.1f} {p.get('Ownership'):5.1f}%")
+
 st.sidebar.markdown(f"**Target Ownership:** {rules['ownership_target_avg'][0]}-{rules['ownership_target_avg'][1]}%")
 st.sidebar.markdown(f"**QB Ownership:** {rules['qb_ownership_target'][0]}-{rules['qb_ownership_target'][1]}%")
 st.sidebar.markdown(f"**Core RB Usage:** {int(rules['core_rb_usage_pct']*100)}%")
