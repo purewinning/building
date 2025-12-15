@@ -64,7 +64,7 @@ selected_strategy = st.sidebar.selectbox(
 strategy = strategy_templates[selected_strategy]
 st.sidebar.info(f"**{strategy['description']}**\n\n{strategy['tooltip']}")
 
-# Set contest type based on strategy
+# Set contest type based on strategy FIRST (before any CONTEST_STRUCTURES access)
 contest_type = strategy['config']
 
 # Allow advanced users to override
@@ -79,6 +79,7 @@ with st.sidebar.expander("🔧 Advanced: Manual Contest Type"):
         contest_type = contest_type_override
         st.warning("⚠️ Manual override active - strategy template settings ignored")
 
+# NOW we can safely access CONTEST_STRUCTURES[contest_type]
 entry_fee = st.sidebar.number_input(
     "Entry Fee ($)",
     min_value=1,
@@ -96,7 +97,7 @@ num_lineups = st.sidebar.slider(
     help="For Single-Entry Grinder: Build 20-50 at a time, repeat for all 150 tournaments"
 )
 
-# Display contest rules
+# Display contest rules (NOW contest_type is guaranteed to be valid)
 st.sidebar.markdown("---")
 st.sidebar.subheader("📊 Strategy Settings")
 rules = CONTEST_STRUCTURES[contest_type]
@@ -233,6 +234,8 @@ with tab1:
                 
                 if not leverage_qbs.empty:
                     st.success(f"💡 **Suggested Leverage QB:** {leverage_qbs.iloc[0]['Name']} ({leverage_qbs.iloc[0]['Ownership']:.1f}% owned, ${leverage_qbs.iloc[0]['Salary']:,})")
+                else:
+                    leverage_qbs = pd.DataFrame()  # Empty dataframe for later checks
                 
                 # Auto-suggest core RB
                 core_rbs = df[
@@ -243,14 +246,21 @@ with tab1:
                 
                 if not core_rbs.empty:
                     st.success(f"⚓ **Suggested Core RB:** {core_rbs.iloc[0]['Name']} ({core_rbs.iloc[0]['Ownership']:.1f}% owned, ${core_rbs.iloc[0]['Salary']:,})")
+                else:
+                    core_rbs = pd.DataFrame()  # Empty dataframe for later checks
                 
-            elif selected_strategy == 'small_gpp_multi':
-                st.info("""
-                **🏆 MULTI-ENTRY LOCKS:**
-                - **QB:** Leave empty - optimizer diversifies across 5-8 QBs
-                - **RB:** Optionally lock core RB for 70% of builds
-                - **WR:** Can lock one stacking WR
-                """)
+            else:
+                # Initialize empty dataframes if not single-entry grinder
+                leverage_qbs = pd.DataFrame()
+                core_rbs = pd.DataFrame()
+                
+                if selected_strategy == 'small_gpp_multi':
+                    st.info("""
+                    **🏆 MULTI-ENTRY LOCKS:**
+                    - **QB:** Leave empty - optimizer diversifies across 5-8 QBs
+                    - **RB:** Optionally lock core RB for 70% of builds
+                    - **WR:** Can lock one stacking WR
+                    """)
             
             # Initialize locks in session state
             if 'locked_players' not in st.session_state:
