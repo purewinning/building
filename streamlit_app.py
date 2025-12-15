@@ -1,5 +1,5 @@
 """
-Streamlit DFS Optimizer - CLEAN SIMPLE VERSION
+Streamlit DFS Optimizer - WORKING VERSION
 """
 
 import streamlit as st
@@ -19,7 +19,7 @@ contest_type = st.sidebar.selectbox(
     options=['single_entry_grinder', 'small_gpp', 'mid_gpp', 'milly_maker'],
     format_func=lambda x: {
         'single_entry_grinder': '🎯 Single-Entry Grinder',
-        'small_gpp': '🏆 Multi-Entry GPP',
+        'small_gpp': '🏆 Multi-Entry GPP', 
         'mid_gpp': '📊 Mid-GPP',
         'milly_maker': '💰 Milly Maker'
     }[x]
@@ -34,30 +34,24 @@ st.sidebar.markdown(f"**Target Own:** {rules['ownership_target_avg'][0]}-{rules[
 st.sidebar.markdown(f"**QB Own:** {rules['qb_ownership_target'][0]}-{rules['qb_ownership_target'][1]}%")
 
 # Main
-uploaded_file = st.file_uploader("Upload CSV", type=['csv'])
+uploaded_file = st.file_uploader("Upload CSV (or leave blank to use default)", type=['csv'])
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    if 'Player' in df.columns:
-        df = df.rename(columns={'Player': 'Name', 'Ownership %': 'Ownership'})
-    
-    st.success(f"✅ {len(df)} players loaded")
+    st.success(f"✅ {len(df)} players loaded from upload")
     df.to_csv('/tmp/player_pool.csv', index=False)
-    use_demo = False
+    use_file = '/tmp/player_pool.csv'
 else:
-    st.info("Upload Stokastic CSV")
-    use_demo = True
+    # Use default file
+    df = pd.read_csv('/mnt/user-data/outputs/dfs_optimizer/default_players.csv')
+    st.info(f"📊 Using default player pool ({len(df)} players)")
+    use_file = '/mnt/user-data/outputs/dfs_optimizer/default_players.csv'
 
 if st.button("🚀 Generate Lineups", type="primary"):
     with st.spinner("Building..."):
         try:
             optimizer = DFSOptimizer(contest_type=contest_type, entry_fee=100)
-            
-            # Simple call without locks
-            if use_demo:
-                results, lineups = optimizer.run('demo', num_lineups=num_lineups)
-            else:
-                results, lineups = optimizer.run('/tmp/player_pool.csv', num_lineups=num_lineups)
+            results, lineups = optimizer.run(use_file, num_lineups=num_lineups)
             
             if lineups and len(lineups) > 0:
                 st.session_state['results'] = results  
@@ -69,6 +63,8 @@ if st.button("🚀 Generate Lineups", type="primary"):
                 
         except Exception as e:
             st.error(f"Error: {e}")
+            import traceback
+            st.code(traceback.format_exc())
 
 # Display
 if 'lineups' in st.session_state:
