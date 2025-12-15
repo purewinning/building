@@ -12,16 +12,72 @@ from main import DFSOptimizer
 st.set_page_config(page_title="DFS Optimizer", page_icon="🏈", layout="wide")
 
 st.title("🏈 DFS Lineup Optimizer")
-st.markdown("### Free Alternative to Stokastic - Reverse Engineered")
+st.markdown("### Winning Structure Builder")
 
 # Sidebar configuration
-st.sidebar.header("⚙️ Configuration")
+st.sidebar.header("⚙️ Strategy Selection")
 
-contest_type = st.sidebar.selectbox(
-    "Contest Type",
-    options=list(CONTEST_STRUCTURES.keys()),
-    format_func=lambda x: CONTEST_STRUCTURES[x]['name']
+# STRATEGY TEMPLATE SELECTION
+strategy_templates = {
+    'single_entry_grinder': {
+        'name': '🎯 Single-Entry Grinder (MY STRATEGY)',
+        'description': '1 entry per tournament, 150 total. Based on Rank 6 & 7 winners who beat 100+ entry players.',
+        'config': 'single_entry_grinder',
+        'tooltip': 'Ultra-leverage QB (3-8%), Core RB mandatory, 10-13% avg ownership. PERFECT for your 150-tournament approach!'
+    },
+    'small_gpp_multi': {
+        'name': '🏆 Multi-Entry GPP (Power User)',
+        'description': '100-150 entries in ONE tournament. $250K winner strategy.',
+        'config': 'small_gpp',
+        'tooltip': 'Build portfolio: 35% leverage QB stacks, 40% game stacks, 70% core RB usage. For when you multi-enter.'
+    },
+    'single_entry_only': {
+        'name': '🎲 Single-Entry Only Tournament',
+        'description': 'For tournaments that ONLY allow 1 entry (like the 4,444 contest).',
+        'config': 'single_entry_grinder',  # Same as grinder but note required
+        'tooltip': 'Core RB is 100% MANDATORY (was in all Top 10). Slightly higher ownership okay (11-14%).'
+    },
+    'satellite': {
+        'name': '🎫 Satellite Qualifier (Extreme Leverage)',
+        'description': 'Winner-take-all satellites for tournament tickets.',
+        'config': 'single_entry_grinder',  # Will adjust in code
+        'tooltip': 'Go extreme: 2-5% QB, all leverage, 6-10% avg ownership. Boom or bust for tickets.'
+    },
+    'high_stakes': {
+        'name': '💰 High-Stakes ($500+)',
+        'description': 'Conservative approach for expensive tournaments.',
+        'config': 'small_gpp',  # Will adjust
+        'tooltip': 'More conservative: 5-10% QB, higher floor, 12-15% avg ownership.'
+    }
+}
+
+st.sidebar.markdown("### 📋 Choose Your Strategy:")
+
+selected_strategy = st.sidebar.selectbox(
+    "Strategy Template",
+    options=list(strategy_templates.keys()),
+    format_func=lambda x: strategy_templates[x]['name'],
+    help="Select the strategy that matches how you're entering tournaments"
 )
+
+# Display strategy info
+strategy = strategy_templates[selected_strategy]
+st.sidebar.info(f"**{strategy['description']}**\n\n{strategy['tooltip']}")
+
+# Set contest type based on strategy
+contest_type = strategy['config']
+
+# Allow advanced users to override
+with st.sidebar.expander("🔧 Advanced: Manual Contest Type"):
+    contest_type_override = st.selectbox(
+        "Override Contest Type",
+        options=['Auto (use strategy template)'] + list(CONTEST_STRUCTURES.keys()),
+        format_func=lambda x: x if x == 'Auto (use strategy template)' else CONTEST_STRUCTURES[x]['name']
+    )
+    
+    if contest_type_override != 'Auto (use strategy template)':
+        contest_type = contest_type_override
+        st.warning("⚠️ Manual override active - strategy template settings ignored")
 
 entry_fee = st.sidebar.number_input(
     "Entry Fee ($)",
@@ -32,21 +88,36 @@ entry_fee = st.sidebar.number_input(
 )
 
 num_lineups = st.sidebar.slider(
-    "Number of Lineups",
+    "Number of Lineups to Build",
     min_value=1,
     max_value=50,
     value=20,
-    step=1
+    step=1,
+    help="For Single-Entry Grinder: Build 20-50 at a time, repeat for all 150 tournaments"
 )
 
 # Display contest rules
 st.sidebar.markdown("---")
-st.sidebar.subheader("📋 Contest Rules")
+st.sidebar.subheader("📊 Strategy Settings")
 rules = CONTEST_STRUCTURES[contest_type]
-st.sidebar.markdown(f"**Entries:** {rules['entries']:,}")
 st.sidebar.markdown(f"**Target Ownership:** {rules['ownership_target_avg'][0]}-{rules['ownership_target_avg'][1]}%")
-st.sidebar.markdown(f"**Target Projection:** {rules['projection_target'][0]}-{rules['projection_target'][1]} pts")
-st.sidebar.markdown(f"**Stack Type:** {', '.join(rules['qb_stack_type'])}")
+st.sidebar.markdown(f"**QB Ownership:** {rules['qb_ownership_target'][0]}-{rules['qb_ownership_target'][1]}%")
+st.sidebar.markdown(f"**Core RB Usage:** {int(rules['core_rb_usage_pct']*100)}%")
+st.sidebar.markdown(f"**Ultra-Leverage Required:** {rules['ultra_leverage_required'][0]}-{rules['ultra_leverage_required'][1]} players")
+st.sidebar.markdown(f"**Max Chalk:** {rules['heavy_chalk_max']} player(s)")
+
+# Show cheat sheet reminder for single-entry grinder
+if selected_strategy == 'single_entry_grinder':
+    st.sidebar.markdown("---")
+    st.sidebar.success("💡 **PRO TIP:** Use CHEAT_SHEET.md for weekly prep!")
+    st.sidebar.markdown("""
+    **Quick Process:**
+    1. Identify leverage QB (3-8%)
+    2. Identify core RB (18-28%)
+    3. Lock both below
+    4. Generate lineups
+    5. Repeat for all 150 tournaments
+    """)
 
 if 'warning' in rules:
     st.sidebar.warning(rules['warning'])
@@ -141,26 +212,97 @@ with tab1:
             df.to_csv('/tmp/player_pool.csv', index=False)
             st.markdown("---")
             
-            # PLAYER LOCKING SYSTEM
+            # PLAYER LOCKING SYSTEM with SMART SUGGESTIONS
             st.markdown("### 🔒 Lock Core Plays")
-            st.markdown("Select players you MUST have in every lineup:")
+            
+            # Show strategy-specific guidance
+            if selected_strategy == 'single_entry_grinder':
+                st.info("""
+                **🎯 SINGLE-ENTRY GRINDER LOCKS:**
+                - **QB:** Pick ONE ultra-leverage (3-8% owned) - Use in ALL 150 tournaments
+                - **RB:** Pick the core RB anchor (18-28% owned) - MANDATORY
+                - **FLEX:** Leave empty - optimizer will find leverage plays
+                """)
+                
+                # Auto-suggest leverage QB
+                leverage_qbs = df[
+                    (df['Position'] == 'QB') & 
+                    (df['Ownership'] >= 3) & 
+                    (df['Ownership'] <= 8)
+                ].sort_values('Projection', ascending=False)
+                
+                if not leverage_qbs.empty:
+                    st.success(f"💡 **Suggested Leverage QB:** {leverage_qbs.iloc[0]['Name']} ({leverage_qbs.iloc[0]['Ownership']:.1f}% owned, ${leverage_qbs.iloc[0]['Salary']:,})")
+                
+                # Auto-suggest core RB
+                core_rbs = df[
+                    (df['Position'] == 'RB') & 
+                    (df['Ownership'] >= 18) & 
+                    (df['Ownership'] <= 28)
+                ].sort_values('Projection', ascending=False)
+                
+                if not core_rbs.empty:
+                    st.success(f"⚓ **Suggested Core RB:** {core_rbs.iloc[0]['Name']} ({core_rbs.iloc[0]['Ownership']:.1f}% owned, ${core_rbs.iloc[0]['Salary']:,})")
+                
+            elif selected_strategy == 'small_gpp_multi':
+                st.info("""
+                **🏆 MULTI-ENTRY LOCKS:**
+                - **QB:** Leave empty - optimizer diversifies across 5-8 QBs
+                - **RB:** Optionally lock core RB for 70% of builds
+                - **WR:** Can lock one stacking WR
+                """)
             
             # Initialize locks in session state
             if 'locked_players' not in st.session_state:
-                st.session_state['locked_players'] = []
+                st.session_state['locked_players'] = {}
             
             col_lock1, col_lock2 = st.columns(2)
             
             with col_lock1:
                 st.markdown("**🎯 Primary Locks** (Foundation of lineup)")
                 
-                # QB Lock
+                # QB Lock with smart default
                 qb_options = ['None'] + sorted(df[df['Position'] == 'QB']['Name'].tolist())
-                locked_qb = st.selectbox("Lock QB:", qb_options, key='lock_qb')
                 
-                # RB Locks
+                # Pre-select suggested QB for single-entry grinder
+                default_qb = 'None'
+                if selected_strategy == 'single_entry_grinder' and not leverage_qbs.empty:
+                    suggested_qb = leverage_qbs.iloc[0]['Name']
+                    if suggested_qb in qb_options:
+                        default_qb_index = qb_options.index(suggested_qb)
+                    else:
+                        default_qb_index = 0
+                else:
+                    default_qb_index = 0
+                
+                locked_qb = st.selectbox(
+                    "Lock QB:", 
+                    qb_options, 
+                    index=default_qb_index,
+                    key='lock_qb',
+                    help="For Single-Entry Grinder: Pick ONE 3-8% owned QB and use in all 150 tournaments"
+                )
+                
+                # RB Locks with smart default
                 rb_options = ['None'] + sorted(df[df['Position'] == 'RB']['Name'].tolist())
-                locked_rb1 = st.selectbox("Lock RB #1:", rb_options, key='lock_rb1')
+                
+                # Pre-select suggested RB for single-entry grinder
+                if selected_strategy == 'single_entry_grinder' and not core_rbs.empty:
+                    suggested_rb = core_rbs.iloc[0]['Name']
+                    if suggested_rb in rb_options:
+                        default_rb_index = rb_options.index(suggested_rb)
+                    else:
+                        default_rb_index = 0
+                else:
+                    default_rb_index = 0
+                
+                locked_rb1 = st.selectbox(
+                    "Lock RB #1:", 
+                    rb_options, 
+                    index=default_rb_index,
+                    key='lock_rb1',
+                    help="For Single-Entry Grinder: MUST lock the core RB (18-28% owned)"
+                )
                 locked_rb2 = st.selectbox("Lock RB #2:", rb_options, key='lock_rb2')
                 
                 # WR Locks
@@ -334,6 +476,80 @@ with tab1:
                     st.metric("Top 10%", f"{top10_pct:.1f}%")
                 with col4:
                     st.metric("Cash %", f"{cash_pct:.1f}%")
+                
+                # STRATEGY VALIDATION for single-entry grinder
+                if selected_strategy == 'single_entry_grinder':
+                    st.markdown("---")
+                    st.markdown("#### 🎯 Strategy Validation")
+                    
+                    # Get players from lineup
+                    players = lineup.get('players', [])
+                    
+                    # Calculate metrics
+                    ultra_leverage_count = sum(1 for p in players if p.get('Ownership', 100) < 5)
+                    core_count = sum(1 for p in players if 10 <= p.get('Ownership', 0) <= 25)
+                    chalk_count = sum(1 for p in players if p.get('Ownership', 0) > 25)
+                    avg_own = lineup.get('avg_ownership', lineup.get('total_ownership', 0) / 9)
+                    
+                    # Find QB and FLEX
+                    qb = next((p for p in players if p.get('Position') == 'QB'), None)
+                    flex = next((p for p in players if p.get('PositionSlot', '').startswith('FLEX')), None)
+                    
+                    # Validation checks
+                    val_col1, val_col2, val_col3 = st.columns(3)
+                    
+                    with val_col1:
+                        # QB check
+                        qb_valid = qb and 3 <= qb.get('Ownership', 100) <= 8
+                        if qb_valid:
+                            st.success(f"✅ QB: {qb['Name']} ({qb.get('Ownership', 0):.1f}%)")
+                        elif qb:
+                            st.warning(f"⚠️ QB: {qb['Name']} ({qb.get('Ownership', 0):.1f}%) - Should be 3-8%")
+                        
+                        # Ultra-leverage check
+                        if 3 <= ultra_leverage_count <= 4:
+                            st.success(f"✅ Ultra-Leverage: {ultra_leverage_count} players")
+                        else:
+                            st.warning(f"⚠️ Ultra-Leverage: {ultra_leverage_count} (need 3-4)")
+                    
+                    with val_col2:
+                        # Core RB check
+                        core_rb = next((p for p in players if p.get('Position') == 'RB' and 18 <= p.get('Ownership', 0) <= 28), None)
+                        if core_rb:
+                            st.success(f"✅ Core RB: {core_rb['Name']} ({core_rb.get('Ownership', 0):.1f}%)")
+                        else:
+                            st.error("❌ No Core RB (18-28% owned)")
+                        
+                        # Chalk check
+                        if chalk_count <= 1:
+                            st.success(f"✅ Chalk: {chalk_count} player (max 1)")
+                        else:
+                            st.warning(f"⚠️ Chalk: {chalk_count} players (should be ≤1)")
+                    
+                    with val_col3:
+                        # FLEX check
+                        flex_valid = flex and flex.get('Ownership', 100) <= 5
+                        if flex_valid:
+                            st.success(f"✅ FLEX: {flex['Name']} ({flex.get('Ownership', 0):.1f}%)")
+                        elif flex:
+                            st.warning(f"⚠️ FLEX: {flex['Name']} ({flex.get('Ownership', 0):.1f}%) - Should be <5%")
+                        
+                        # Ownership check
+                        if 10 <= avg_own <= 13:
+                            st.success(f"✅ Avg Own: {avg_own:.1f}%")
+                        elif 9 <= avg_own <= 14:
+                            st.info(f"📊 Avg Own: {avg_own:.1f}% (acceptable)")
+                        else:
+                            st.warning(f"⚠️ Avg Own: {avg_own:.1f}% (should be 10-13%)")
+                    
+                    # Overall verdict
+                    all_valid = (qb_valid and core_rb and chalk_count <= 1 and 
+                                3 <= ultra_leverage_count <= 4 and 9 <= avg_own <= 14)
+                    
+                    if all_valid:
+                        st.success("🎯 **PERFECT!** This lineup follows the winning formula!")
+                    else:
+                        st.info("💡 Review validation above. Rebuild if needed for optimal structure.")
                 
                 st.markdown("---")
                 
