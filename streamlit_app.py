@@ -4,6 +4,7 @@ Streamlit DFS Optimizer - WORKING VERSION
 
 import streamlit as st
 import pandas as pd
+import os
 from config import CONTEST_STRUCTURES
 from main import DFSOptimizer
 
@@ -34,7 +35,7 @@ st.sidebar.markdown(f"**Target Own:** {rules['ownership_target_avg'][0]}-{rules[
 st.sidebar.markdown(f"**QB Own:** {rules['qb_ownership_target'][0]}-{rules['qb_ownership_target'][1]}%")
 
 # Main
-uploaded_file = st.file_uploader("Upload CSV (or leave blank to use default)", type=['csv'])
+uploaded_file = st.file_uploader("Upload Player Pool CSV", type=['csv'])
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
@@ -42,12 +43,27 @@ if uploaded_file:
     df.to_csv('/tmp/player_pool.csv', index=False)
     use_file = '/tmp/player_pool.csv'
 else:
-    # Use default file
-    df = pd.read_csv('/mnt/user-data/outputs/dfs_optimizer/default_players.csv')
-    st.info(f"📊 Using default player pool ({len(df)} players)")
-    use_file = '/mnt/user-data/outputs/dfs_optimizer/default_players.csv'
+    # Check for default file in same directory as script
+    default_file = os.path.join(os.path.dirname(__file__), 'default_players.csv')
+    
+    if os.path.exists(default_file):
+        df = pd.read_csv(default_file)
+        st.info(f"📊 Using default player pool ({len(df)} players)")
+        use_file = default_file
+    else:
+        st.warning("⚠️ No player pool found. Please upload a CSV file.")
+        st.markdown("""
+        **CSV should include these columns:**
+        - Player (or Name)
+        - Position (QB, RB, WR, TE, DST)
+        - Salary
+        - Projection
+        - Ownership % (or Ownership)
+        - Team
+        """)
+        use_file = None
 
-if st.button("🚀 Generate Lineups", type="primary"):
+if use_file and st.button("🚀 Generate Lineups", type="primary"):
     with st.spinner("Building..."):
         try:
             optimizer = DFSOptimizer(contest_type=contest_type, entry_fee=100)
