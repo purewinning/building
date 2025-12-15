@@ -10,6 +10,55 @@ WINNING STRUCTURE from $250k 1st place finish (Wildcat 4,170 entries)
 
 # Contest structure definitions - BASED ON ACTUAL WINNING DATA
 CONTEST_STRUCTURES = {
+    'single_entry_grinder': {
+        'name': 'SINGLE-ENTRY GRINDER (1 entry per tournament, 150 total)',
+        'entries': 4444,
+        'payout_structure': 'top_heavy',
+        
+        # CRITICAL: Based on Dee1Donly (Rank 6) and chichigetda (Rank 7)
+        'ownership_target_avg': (10, 13),  # GOLDILOCKS ZONE
+        'ownership_total_range': (85, 125),
+        'ownership_target_total': (85, 125),
+        
+        'projection_target': (140, 155),
+        
+        # MANDATORY REQUIREMENTS
+        'ultra_leverage_required': (3, 4),  # MUST have 3-4 sub-5%
+        'core_players_required': (4, 5),   # MUST have 4-5 core
+        'heavy_chalk_max': 1,               # MAX 1 chalk (Dee1Donly had Ja'Marr)
+        'leverage_plays_count': (3, 4),
+        'chalk_allowed': True,
+        'chalk_max_count': 1,
+        
+        # QB: ULTRA-LEVERAGE (Trevor Lawrence 3.7% won Rank 6)
+        'qb_ownership_target': (3, 8),      # CRITICAL RANGE
+        'qb_ownership_max': 8,
+        'qb_ownership_preferred': (3, 8),
+        'qb_salary_range': (5000, 6500),    # Value QB only
+        'qb_usage_pct': 1.00,               # ALWAYS use leverage QB
+        'qb_stack_type': ['QB + 1', 'QB + 2'],
+        
+        # RB: CORE ANCHOR (Travis Etienne 22.8% was in 100% of single-entry Top 10)
+        'core_rb_ownership': (18, 28),      # The "must-have"
+        'core_rb_usage_pct': 1.00,          # MANDATORY (100% of lineups)
+        'bring_back_required': False,
+        
+        # STACKING (helps but not required)
+        'game_stack_pct': 0.30,             # 30% of time
+        'stack_min_players': 2,
+        'stack_ownership_target': (8, 30),
+        
+        # TE: PUNT STRATEGY (80% of winners punted)
+        'te_punt_pct': 0.80,                # Punt 80% of time
+        'te_punt_salary_max': 4500,
+        
+        # WEIGHTS (projection slightly favored)
+        'projection_weight': 0.85,          # 85% projection
+        'ownership_weight': 0.15,           # 15% ownership
+        
+        'description': 'SINGLE-ENTRY GRINDER: 1 lineup per tournament, 150 tournaments total. Based on Rank 6 & 7 single entries that beat 100+ entry players.'
+    },
+    
     'small_gpp': {
         'name': '4,444 Entries ($250K Winner Blueprint)',
         'entries': 4444,
